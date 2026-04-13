@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gompp/gompp/blob/main/LICENSE">License</a> ·
+  <a href="https://github.com/ardeanx/gompp/blob/main/LICENSE">License</a> ·
   <a href="https://docs.gompp.net">Documentation</a> ·
-  <a href="https://github.com/gompp/gompp/issues">Issues</a> ·
+  <a href="https://github.com/ardeanx/gompp/issues">Issues</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -90,7 +90,7 @@ Go 1.25+, Node.js 22+, Bun, PostgreSQL 16+, FFmpeg
 ### Local Development
 
 ```bash
-git clone https://github.com/gompp/gompp.git
+git clone https://github.com/ardeanx/gompp.git
 cd gompp
 cp .env.example .env
 # Edit .env — set GOMPP_JWT_SECRET at minimum
@@ -134,7 +134,7 @@ For full documentation, visit [docs.gompp.net](https://docs.gompp.net).
 
 - **Email**: <ardeanbimasaputra@gmail.com>
 - **Telegram**: [@ardeanbimasaputra](https://t.me/ardeanbimasaputra)
-- **GitHub Issues**: [gompp/gompp/issues](https://github.com/gompp/gompp/issues)
+- **GitHub Issues**: [gompp/gompp/issues](https://github.com/ardeanx/gompp/issues)
 
 ---
 

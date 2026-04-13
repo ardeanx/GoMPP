@@ -153,7 +153,7 @@ const Header = () => {
           {/* Desktop CTA Buttons */}
           <div className="hidden md:flex items-center gap-3">
             <GithubStars
-              repoUrl="https://github.com/gompp/gompp"
+              repoUrl="https://github.com/ardeanx/gompp"
               count="33.0k"
             />
             <Button

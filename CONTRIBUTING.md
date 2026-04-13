@@ -12,7 +12,7 @@ By participating in this project, you agree to abide by our
 
 ### Reporting Bugs
 
-If you find a bug, please open a [GitHub Issue](https://github.com/gompp/gompp/issues)
+If you find a bug, please open a [GitHub Issue](https://github.com/ardeanx/gompp/issues)
 with the following information:
 
 - A clear and descriptive title
@@ -24,7 +24,7 @@ with the following information:
 ### Suggesting Features
 
 Feature requests are welcome. Please open a
-[GitHub Issue](https://github.com/gompp/gompp/issues) and include:
+[GitHub Issue](https://github.com/ardeanx/gompp/issues) and include:
 
 - A clear description of the feature
 - The problem it solves or the use case it addresses
@@ -54,7 +54,7 @@ Feature requests are welcome. Please open a
 
 ```bash
 # Clone the repository
-git clone https://github.com/gompp/gompp.git
+git clone https://github.com/ardeanx/gompp.git
 cd gompp
 
 # Copy environment configuration
@@ -200,5 +200,5 @@ under the same license as the project.
 ## Questions?
 
 If you have questions about contributing, feel free to open a
-[Discussion](https://github.com/gompp/gompp/discussions) or reach out at
+[Discussion](https://github.com/ardeanx/gompp/discussions) or reach out at
 **<ardeanbimasaputra@gmail.com>**.
