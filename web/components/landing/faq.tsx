@@ -115,10 +115,10 @@ const FAQ = () => {
           <span className="text-muted-foreground">Still have questions?</span>
 
           <Link
-            href="#contact"
+            href="https://t.me/ardeanbimasaputra"
             className="text-indigo-600 hover:text-indigo-700 transition-colors hover:underline"
           >
-            Contact our Support Team
+            Contact Me
           </Link>
         </motion.div>
       </div>

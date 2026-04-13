@@ -14,14 +14,14 @@ const Contact = () => {
       title: 'Email',
       content: 'ardeanbimasaputra@gmail.com',
       href: 'mailto:ardeanbimasaputra@gmail.com',
-      description: "Send us an email and we'll respond within 24 hours.",
+      description: "Send me an email and I'll respond within 24 hours.",
     },
     {
       icon: Phone,
       title: 'Telegram',
       content: '@ardeanbimasaputra',
       href: 'https://t.me/ardeanbimasaputra',
-      description: 'Chat with us directly on Telegram for quick support.',
+      description: 'Chat with me directly on Telegram for quick support.',
     },
   ];
 

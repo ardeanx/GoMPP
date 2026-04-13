@@ -96,8 +96,7 @@ const Features = () => {
           <CustomTitle>Key Features</CustomTitle>
 
           <CustomSubtitle>
-            Everything you need to transcode, manage, and deliver video content
-            with a powerful self-hosted platform.
+            Everything you need to Deliver Your Videos to the World.
           </CustomSubtitle>
         </motion.div>
 

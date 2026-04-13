@@ -15,18 +15,39 @@ const LinkedInIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const InstagramIcon = ({ className }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2.163c3.204 0 3.584.012 4.85.07 1.366.062 2.633.334 3.608 1.31.975.975 1.248 2.243 1.31 3.608.058 1.266.069 1.645.069 4.85s-.012 3.584-.07 4.85c-.062 1.366-.334 2.633-1.31 3.608-.975.975-2.243 1.248-3.608 1.31-1.266.058-1.645.069-4.85.069s-3.584-.012-4.85-.07c-1.366-.062-2.633-.334-3.608-1.31-.975-.975-1.248-2.243-1.31-3.608C2.175 15.584 2.163 15.204 2.163 12s.012-3.584.07-4.85c.062-1.366.334-2.633 1.31-3.608C4.518 2.497 5.785 2.224 7.15 2.163c1.266-.058 1.645-.069 4.85-.069zM12 0C8.741 0 8.332.013 7.052.072c-1.675.077-3.167.36-4.364 1.556C1.44 2.823 1.156 4.315 1.08 5.991c-.059 1.28-.072 1.689-.072 4.948s0 3.668.072 4.948c0 1.676 .36 3 .556 4 .196 .999 .46 1 .556 1 .096 .001 .36-.001 .556-1 .196 -1 .556 -2 .556 -4s0 -3668 -.072 -4948c-.077 -1676 -.36 -3 -1 -4C3 .432 2 .149 .556 .072C-.332 -.013 -.741 -.001 -12 -.001zM12 5a7 7 0 100 14A7 7 0 0012 5zm0 11a4 4 0 110-8A4 4 0 0112 16zm6 -11a1 .9999 0 11-2 .00001A1 .9999 0 0118 .9999z" />
+  </svg>
+);
+
 const Footer = () => {
   const links = {
-    product: ['Features', 'Pricing', 'API', 'Documentation'],
-    company: ['About', 'Blog', 'Careers', 'Contact'],
-    support: ['Help Center', 'Community', 'Status', 'Security'],
+    Information: [
+      { name: 'API', href: 'https://docs.gompp.net/api-reference' },
+      { name: 'Documentation', href: 'https://docs.gompp.net' },
+      {
+        name: 'Community',
+        href: 'https://github.com/ardeanx/gompp/discussions',
+      },
+      { name: 'Status', href: '/api/health' },
+      { name: 'Who Created GoMPP?', href: 'https://ardeanbimasaputra.com' },
+    ],
   };
 
   const socialLinks = [
-    { icon: X, href: '#', label: 'X (Twitter)' },
-    { icon: GitHubIcon, href: '#', label: 'GitHub' },
-    { icon: LinkedInIcon, href: '#', label: 'LinkedIn' },
-    { icon: Mail, href: '#', label: 'Email' },
+    {
+      icon: InstagramIcon,
+      href: 'https://instagram.com/ardeanbimasaputra',
+      label: 'Instagram',
+    },
+    { icon: GitHubIcon, href: 'https://github.com/ardeanx', label: 'GitHub' },
+    {
+      icon: LinkedInIcon,
+      href: 'https://linkedin.com/in/ardeanbimasptra',
+      label: 'LinkedIn',
+    },
+    { icon: Mail, href: 'mailto:ardeanbimasaputra@gmail.com', label: 'Email' },
   ];
 
   return (
@@ -45,7 +66,7 @@ const Footer = () => {
                 <Logo />
               </div>
               <p className="text-muted-foreground mb-6 max-w-sm">
-                Open-source video transcoding platform. Upload, transcode, and
+                Open-source Media Processing Platform. Upload, process, and
                 deliver media at scale with FFmpeg.
               </p>
               <div className="flex space-x-4">
@@ -53,6 +74,8 @@ const Footer = () => {
                   <motion.a
                     key={index}
                     href={social.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     className="size-9 border border-border/60 text-muted-foreground rounded-md flex items-center justify-center hover:text-foreground transition-colors"
@@ -66,8 +89,8 @@ const Footer = () => {
           </div>
 
           {/* 3 Column Menu - Right aligned */}
-          <div className="w-full grow lg:w-auto lg:grow-0 lg:w-2/3 flex justify-end">
-            <div className="w-full lg:w-auto flex justify-between flex-wrap lg:grid lg:grid-cols-3 gap-8 lg:gap-16">
+          <div className="flex justify-end">
+            <div className="flex flex-wrap gap-8 lg:gap-16">
               {Object.entries(links).map(([category, items], categoryIndex) => (
                 <motion.div
                   key={category}
@@ -83,10 +106,12 @@ const Footer = () => {
                     {items.map((item, index) => (
                       <li key={index}>
                         <a
-                          href="#"
+                          href={item.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="text-accent-foreground hover:text-indigo-600 transition-colors hover:underline"
                         >
-                          {item}
+                          {item.name}
                         </a>
                       </li>
                     ))}
@@ -101,10 +126,19 @@ const Footer = () => {
 
         <div className="flex flex-col md:flex-row justify-between items-center">
           <p className="text-muted-foreground text-sm">
-            © 2025 GoMPP. All rights reserved.
+            © {new Date().getFullYear()} GoMPP. Made with ❤️ by{' '}
+            <a
+              href="https://ardeanbimasaputra.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent-foreground hover:text-indigo-600 transition-colors hover:underline"
+            >
+              Ardean Bima Saputra
+            </a>
+            .
           </p>
           <p className="text-muted-foreground text-sm mt-4 md:mt-0">
-            Open-source video transcoding platform
+            Inspired by Cloudflare Stream, Bunny Stream, AWS MediaConvert, and Mux Video.
           </p>
         </div>
       </div>

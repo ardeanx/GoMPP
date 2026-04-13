@@ -188,8 +188,8 @@ const Hero = () => {
             transition={{ duration: 0.8, delay: 0.4 }}
             className="text-base md:text-xl text-muted-foreground mb-6 md:mb-10 max-w-[600px] mx-auto leading-relaxed"
           >
-            Open-source video transcoding platform powered by FFmpeg. Upload,
-            transcode, and deliver media at scale.
+            Open-source Media Processing Platform powered by FFmpeg. Upload,
+            process, and deliver media at scale.
           </motion.p>
 
           <motion.div
@@ -204,7 +204,7 @@ const Hero = () => {
               asChild
             >
               <a href="/signin">
-                Get Started Free
+                Upload Video Now
                 <ArrowRight className="h-5 w-5 transition-transform" />
               </a>
             </Button>
@@ -239,10 +239,8 @@ const Hero = () => {
                   </div>
                 }
                 animationStyle="from-center"
-                videoSrc="https://www.youtube.com/embed/VIbMn0QHBlw?si=uV9MFOqt6dmBs0vW"
-                thumbnailSrc={
-                  resolvedTheme === 'dark' ? '/screens/2.png' : '/screens/5.png'
-                }
+                videoSrc="/gompp.mp4"
+                thumbnailSrc={resolvedTheme === 'dark' ? '/1.png' : '/1.png'}
                 thumbnailAlt="Product Demo"
               />
             )}

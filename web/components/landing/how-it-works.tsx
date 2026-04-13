@@ -20,7 +20,7 @@ const HowItWorks = () => {
       title: 'Upload Your Video',
       description:
         'Upload videos from your local machine or connect cloud storage.',
-      image: '/screens/4.png',
+      image: '/upload-video.png',
       icon: CloudUpload,
     },
     {
@@ -28,7 +28,7 @@ const HowItWorks = () => {
       title: 'Choose a Preset',
       description:
         'Select from built-in presets or create custom encoding profiles.',
-      image: '/screens/5.png',
+      image: '/choose-preset.png',
       icon: Cog,
     },
     {
@@ -36,7 +36,7 @@ const HowItWorks = () => {
       title: 'Transcode & Process',
       description:
         'FFmpeg processes your video with hardware acceleration support.',
-      image: '/screens/3.png',
+      image: '/process.png',
       icon: ChartNoAxesCombined,
     },
     {
@@ -44,7 +44,7 @@ const HowItWorks = () => {
       title: 'Download & Share',
       description:
         'Download the transcoded file or stream it directly from GoMPP.',
-      image: '/screens/4.png',
+      image: '/share.png',
       icon: Cable,
     },
   ];
@@ -183,10 +183,10 @@ const HowItWorks = () => {
         {/* Bottom CTA */}
         <div className="text-center mt-16">
           <p className="text-muted-foreground mb-4">
-            Ready to transcode? Upload your first video now.
+            Ready to get started? Upload your first video now.
           </p>
           <Button size="lg" asChild>
-            <Link href="#cta">Start Your Journey</Link>
+            <Link href="/signin">Upload Video Now</Link>
           </Button>
         </div>
       </div>

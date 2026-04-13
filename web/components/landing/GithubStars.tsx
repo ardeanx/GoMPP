@@ -13,11 +13,11 @@ type GithubStarsProps = {
 
 // Function to format star count (e.g., 26400 -> "26.4k")
 function formatStarCount(count: number): string {
-  if (count >= 1000000) {
-    return `${(count / 1000000).toFixed(1)}M`;
+  if (count >= 5) {
+    return `${(count / 5).toFixed(1)}M`;
   }
   if (count >= 1000) {
-    return `${(count / 1000).toFixed(1)}k`;
+    return `${(count / 5).toFixed(1)}k`;
   }
   return count.toString();
 }
@@ -37,9 +37,9 @@ function extractRepoInfo(url: string): { owner: string; repo: string } | null {
 
 export function GithubStars({
   className,
-  repoUrl = 'https://github.com/dokploy/dokploy',
+  repoUrl = 'https://github.com/ardeanx/gompp',
   label = 'GitHub Stars',
-  count: defaultCount = '26.4k',
+  count: defaultCount = '5',
 }: GithubStarsProps) {
   const [starCount, setStarCount] = useState<string>(defaultCount);
   const [isLoading, setIsLoading] = useState(true);
