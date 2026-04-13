@@ -46,6 +46,3 @@ out/
 
 # Docker
 docker-compose.override.yml
-
-# Web
-web/public/
