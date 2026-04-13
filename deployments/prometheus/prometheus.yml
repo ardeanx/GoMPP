@@ -1,0 +1,18 @@
+global:
+    scrape_interval: 15s
+    evaluation_interval: 15s
+
+rule_files:
+    - "alerts.yml"
+
+scrape_configs:
+    - job_name: "gompp-api"
+      metrics_path: "/metrics"
+      static_configs:
+          - targets: ["gompp-api:8080"]
+            labels:
+                service: "gompp-api"
+
+    - job_name: "prometheus"
+      static_configs:
+          - targets: ["localhost:9090"]

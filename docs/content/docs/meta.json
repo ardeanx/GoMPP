@@ -1,0 +1,20 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "---Getting Started---",
+    "getting-started",
+    "architecture",
+    "configuration",
+    "---Guides---",
+    "backend",
+    "frontend",
+    "transcoding",
+    "---Reference---",
+    "api-reference",
+    "database",
+    "---Operations---",
+    "deployment",
+    "security",
+    "monitoring"
+  ]
+}

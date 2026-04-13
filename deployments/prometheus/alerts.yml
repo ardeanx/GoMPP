@@ -1,0 +1,109 @@
+groups:
+    - name: gompp_api
+      rules:
+          # High error rate (>5% of requests returning 5xx)
+          - alert: HighErrorRate
+            expr: |
+                (
+                  sum(rate(gompp_http_requests_total{status=~"5.."}[5m]))
+                  /
+                  sum(rate(gompp_http_requests_total[5m]))
+                ) > 0.05
+            for: 5m
+            labels:
+                severity: critical
+            annotations:
+                summary: "High HTTP error rate"
+                description: "More than 5% of HTTP requests are returning 5xx errors for the last 5 minutes."
+
+          # High request latency (p95 > 2s)
+          - alert: HighRequestLatency
+            expr: |
+                histogram_quantile(0.95, sum(rate(gompp_http_request_duration_seconds_bucket[5m])) by (le))
+                > 2
+            for: 5m
+            labels:
+                severity: warning
+            annotations:
+                summary: "High HTTP request latency"
+                description: "95th percentile request latency is above 2 seconds."
+
+    - name: gompp_transcode
+      rules:
+          # Transcode queue depth too high
+          - alert: TranscodeQueueBacklog
+            expr: gompp_transcode_queue_depth > 50
+            for: 10m
+            labels:
+                severity: warning
+            annotations:
+                summary: "Transcode queue backlog"
+                description: "More than 50 transcode jobs pending for over 10 minutes."
+
+          # Transcode failure rate
+          - alert: TranscodeHighFailureRate
+            expr: |
+                (
+                  sum(rate(gompp_transcode_jobs_total{status="failed"}[15m]))
+                  /
+                  sum(rate(gompp_transcode_jobs_total[15m]))
+                ) > 0.1
+            for: 10m
+            labels:
+                severity: critical
+            annotations:
+                summary: "High transcode failure rate"
+                description: "More than 10% of transcode jobs are failing."
+
+          # No active workers
+          - alert: NoActiveTranscodeWorkers
+            expr: gompp_transcode_workers_active == 0 and gompp_transcode_queue_depth > 0
+            for: 5m
+            labels:
+                severity: critical
+            annotations:
+                summary: "No active transcode workers"
+                description: "There are pending transcode jobs but no active workers processing them."
+
+    - name: gompp_storage
+      rules:
+          # Storage operation errors
+          - alert: StorageErrors
+            expr: sum(rate(gompp_storage_operation_errors_total[5m])) > 0.1
+            for: 5m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Storage operation errors"
+                description: "Storage backend is experiencing errors."
+
+    - name: gompp_database
+      rules:
+          # Slow database queries
+          - alert: SlowDatabaseQueries
+            expr: |
+                histogram_quantile(0.95, sum(rate(gompp_db_query_duration_seconds_bucket[5m])) by (le))
+                > 1
+            for: 5m
+            labels:
+                severity: warning
+            annotations:
+                summary: "Slow database queries"
+                description: "95th percentile database query latency is above 1 second."
+
+    - name: gompp_webhooks
+      rules:
+          # Webhook delivery failures
+          - alert: WebhookDeliveryFailures
+            expr: |
+                (
+                  sum(rate(gompp_webhook_deliveries_total{success="false"}[15m]))
+                  /
+                  sum(rate(gompp_webhook_deliveries_total[15m]))
+                ) > 0.2
+            for: 10m
+            labels:
+                severity: warning
+            annotations:
+                summary: "High webhook delivery failure rate"
+                description: "More than 20% of webhook deliveries are failing."

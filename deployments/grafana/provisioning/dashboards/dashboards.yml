@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+    - name: "GoMPP"
+      orgId: 1
+      folder: "GoMPP"
+      type: file
+      disableDeletion: false
+      editable: true
+      options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false

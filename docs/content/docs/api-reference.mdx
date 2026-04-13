@@ -1,0 +1,839 @@
+---
+title: API Reference
+description: Complete REST API reference for the GoMPP backend.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Base URL: `http://localhost:8080/api/v1`
+
+All request and response bodies use `Content-Type: application/json` unless noted otherwise.
+
+---
+
+## Authentication
+
+Most endpoints require authentication via one of:
+
+| Method  | Header          | Format                  |
+| ------- | --------------- | ----------------------- |
+| JWT     | `Authorization` | `Bearer {access_token}` |
+| API Key | `X-API-Key`     | `gompp_{key}`           |
+
+Public endpoints are marked with **Public**. Admin-only endpoints are marked with **Admin**.
+
+### Error Envelope
+
+All errors follow a consistent format:
+
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "invalid or expired token"
+  }
+}
+```
+
+| Code               | HTTP Status | Description                    |
+| ------------------ | ----------- | ------------------------------ |
+| `UNAUTHORIZED`     | 401         | Missing or invalid credentials |
+| `FORBIDDEN`        | 403         | Insufficient permissions       |
+| `NOT_FOUND`        | 404         | Resource not found             |
+| `VALIDATION_ERROR` | 400         | Invalid request body           |
+| `RATE_LIMITED`     | 429         | Rate limit exceeded            |
+| `INTERNAL_ERROR`   | 500         | Server error                   |
+
+---
+
+## Auth
+
+### Register
+
+**Public** · `POST /auth/register`
+
+```json
+// Request
+{
+  "email": "user@example.com",
+  "username": "johndoe",
+  "password": "securepassword"
+}
+
+// Response (201 Created)
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "johndoe",
+  "role": "user",
+  "is_active": true,
+  "created_at": "2025-01-01T00:00:00Z"
+}
+```
+
+Validation: email (valid format), username (3–30 chars, alphanumeric + `_` `-`), password (8+ chars).
+
+### Login
+
+**Public** · `POST /auth/login`
+
+```json
+// Request
+{
+  "email": "user@example.com",
+  "password": "securepassword"
+}
+
+// Response (200 OK)
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "eyJhbGci...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "user": { ... }
+}
+```
+
+### Refresh Token
+
+**Public** · `POST /auth/refresh`
+
+```json
+// Request
+{ "refresh_token": "eyJhbGci..." }
+
+// Response (200 OK)
+{
+  "access_token": "eyJhbGci...",
+  "expires_in": 3600
+}
+```
+
+### Google Login
+
+**Public** · `POST /auth/google`
+
+```json
+// Request
+{ "credential": "google-id-token-jwt" }
+
+// Response (200 OK)
+// Same as Login response
+```
+
+Creates a new user on first Google sign-in.
+
+### Passkey Login (Begin)
+
+**Public** · `POST /auth/passkey/begin`
+
+```json
+// Response (200 OK)
+{
+  "options": {
+    /* CredentialRequestOptions */
+  },
+  "session": "base64-session-data"
+}
+```
+
+### Passkey Login (Finish)
+
+**Public** · `POST /auth/passkey/finish`
+
+```json
+// Request
+{
+  "session": "base64-session-data",
+  "credential": {
+    /* AssertionResponse */
+  }
+}
+
+// Response (200 OK)
+// Same as Login response
+```
+
+### Auth Providers
+
+**Public** · `GET /auth/providers`
+
+```json
+// Response (200 OK)
+{
+  "google": true,
+  "google_client_id": "123.apps.googleusercontent.com",
+  "passkey": true
+}
+```
+
+### Current User
+
+`GET /auth/me`
+
+```json
+// Response (200 OK)
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "johndoe",
+  "role": "user",
+  "is_active": true,
+  "avatar_url": "/avatars/uuid.jpg",
+  "has_google": true,
+  "passkey_count": 2,
+  "last_login_at": "2025-01-01T00:00:00Z",
+  "created_at": "2025-01-01T00:00:00Z"
+}
+```
+
+### Logout
+
+`POST /auth/logout` → `204 No Content`
+
+Stateless — no server-side session invalidation.
+
+---
+
+## Videos
+
+### Upload Video
+
+`POST /videos/upload` · `Content-Type: multipart/form-data`
+
+| Field   | Type   | Required | Description                  |
+| ------- | ------ | -------- | ---------------------------- |
+| `file`  | file   | Yes      | Video file                   |
+| `title` | string | No       | Title (defaults to filename) |
+
+```json
+// Response (201 Created)
+{
+  "id": "uuid",
+  "title": "My Video",
+  "slug": "my-video-a1b2c3d4",
+  "status": "uploading",
+  "original_filename": "video.mp4",
+  "file_size": 104857600,
+  "created_at": "2025-01-01T00:00:00Z"
+}
+```
+
+<Callout type="info">
+  The server buffers up to 32 MB in memory; larger uploads spill to disk.
+  Transcode jobs are created automatically for all default presets.
+</Callout>
+
+### List Videos
+
+`GET /videos`
+
+| Param      | Type   | Default      | Description                                                            |
+| ---------- | ------ | ------------ | ---------------------------------------------------------------------- |
+| `page`     | int    | `1`          | Page number                                                            |
+| `per_page` | int    | `20`         | Items per page                                                         |
+| `status`   | string | —            | Filter: `uploading`, `uploaded`, `processing`, `ready`, `failed`       |
+| `search`   | string | —            | Search title (ILIKE)                                                   |
+| `sort`     | string | `created_at` | Sort field: `created_at`, `title`, `status`, `file_size`, `view_count` |
+| `order`    | string | `desc`       | Sort order: `asc`, `desc`                                              |
+
+```json
+// Response (200 OK)
+{
+  "data": [ { ... } ],
+  "page": 1,
+  "per_page": 20,
+  "total": 42
+}
+```
+
+Non-admin users only see their own videos.
+
+### Get Video
+
+`GET /videos/{id}`
+
+```json
+// Response (200 OK)
+{
+  "video": {
+    "id": "uuid",
+    "title": "My Video",
+    "slug": "my-video-a1b2c3d4",
+    "status": "ready",
+    "duration": 120.5,
+    "width": 1920,
+    "height": 1080,
+    "file_size": 104857600,
+    "transcoded_size": 52428800,
+    "view_count": 1234,
+    "is_public": true,
+    "allow_download": false,
+    "thumbnail_path": "/transcoded/.../thumbnail/thumb.jpg",
+    "master_playlist": "/transcoded/.../playlist.m3u8",
+    "created_at": "2025-01-01T00:00:00Z"
+  },
+  "jobs": [
+    {
+      "id": "uuid",
+      "preset_id": "uuid",
+      "status": "completed",
+      "progress": 100,
+      "output_size": 26214400,
+      "duration": 120.5,
+      "attempts": 1,
+      "started_at": "2025-01-01T00:01:00Z",
+      "completed_at": "2025-01-01T00:05:00Z"
+    }
+  ],
+  "stream_url": "/transcoded/.../playlist.m3u8?sig=...&exp=..."
+}
+```
+
+### Update Video
+
+`PUT /videos/{id}`
+
+```json
+// Request (all fields optional)
+{
+  "title": "New Title",
+  "description": "Updated description",
+  "is_public": true,
+  "allow_download": true
+}
+
+// Response (200 OK)
+{ ... updated video ... }
+```
+
+Owner or admin only.
+
+### Delete Video
+
+`DELETE /videos/{id}` → `204 No Content`
+
+Soft-deletes the video (sets `deleted_at`). Owner or admin only.
+
+### Retranscode
+
+`POST /videos/{id}/retranscode`
+
+```json
+// Request (optional — uses default presets if empty)
+{ "preset_ids": ["uuid1", "uuid2"] }
+
+// Response (202 Accepted)
+{
+  "jobs_created": 3,
+  "job_ids": ["uuid1", "uuid2", "uuid3"]
+}
+```
+
+### Thumbnails
+
+`GET /videos/{id}/thumbnails`
+
+```json
+// Response (200 OK)
+{
+  "thumbnails": ["/transcoded/.../thumbnail/thumb_0.jpg", ...],
+  "current": "/transcoded/.../thumbnail/thumb.jpg"
+}
+```
+
+`PUT /videos/{id}/thumbnail`
+
+```json
+{ "path": "/transcoded/.../thumbnail/thumb_2.jpg" }
+```
+
+`POST /videos/{id}/thumbnail/upload` · `Content-Type: multipart/form-data`
+
+Upload a custom thumbnail image (max 10 MB, `image/*`).
+
+### Public Video Access
+
+**Public** · `GET /public/videos/{slug}`
+
+Returns video metadata with `stream_url` and `embed_url`. Increments `view_count`.
+
+**Public** · `GET /public/videos/{slug}/download`
+
+Streams the source file. Returns `403 Forbidden` if `allow_download` is false.
+
+---
+
+## Presets
+
+### List Presets
+
+`GET /presets`
+
+```json
+// Response (200 OK)
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "1080p Standard",
+      "codec": "h264",
+      "resolutions": [{ "label": "1920x1080", "width": 1920, "height": 1080 }],
+      "video_bitrate": "5000k",
+      "crf": 23,
+      "hw_accel": "none",
+      "output_format": "hls",
+      "encryption": "none",
+      "is_default": true,
+      "is_active": true
+    }
+  ]
+}
+```
+
+### Get Preset
+
+`GET /presets/{id}`
+
+### Create Preset
+
+**Admin** · `POST /presets`
+
+### Update Preset
+
+**Admin** · `PUT /presets/{id}`
+
+### Delete Preset
+
+**Admin** · `DELETE /presets/{id}` → `204 No Content`
+
+Fails if the preset is referenced by existing transcode jobs.
+
+---
+
+## Webhooks
+
+### List Webhooks
+
+`GET /webhooks?page=1&per_page=20`
+
+### Create Webhook
+
+`POST /webhooks`
+
+```json
+// Request
+{
+  "name": "My Webhook",
+  "url": "https://example.com/webhook",
+  "events": ["video.uploaded", "transcode.completed", "video.ready"]
+}
+
+// Response (201 Created)
+{
+  "id": "uuid",
+  "name": "My Webhook",
+  "url": "https://example.com/webhook",
+  "secret": "whsec_...",      // Only shown at creation
+  "events": ["video.uploaded", "transcode.completed", "video.ready"],
+  "is_active": true
+}
+```
+
+<Callout type="warn">
+  The webhook `secret` is only returned when creating or regenerating. Store it
+  securely.
+</Callout>
+
+### Update Webhook
+
+`PUT /webhooks/{id}`
+
+```json
+{
+  "name": "Updated Name",
+  "url": "https://new-url.com/webhook",
+  "events": ["video.ready"],
+  "is_active": false
+}
+```
+
+### Delete Webhook
+
+`DELETE /webhooks/{id}` → `204 No Content`
+
+### Regenerate Secret
+
+`POST /webhooks/{id}/regenerate-secret`
+
+```json
+// Response (200 OK)
+{ "secret": "whsec_new_secret..." }
+```
+
+### Webhook Delivery Log
+
+`GET /webhooks/{id}/deliveries`
+
+Returns an array of delivery attempts with status, duration, and response info.
+
+### Webhook Events
+
+| Event                 | Trigger                                  |
+| --------------------- | ---------------------------------------- |
+| `video.uploaded`      | Video file upload completed              |
+| `video.deleted`       | Video soft-deleted                       |
+| `transcode.started`   | Transcode job claimed by worker          |
+| `transcode.completed` | Transcode job finished successfully      |
+| `transcode.failed`    | Transcode job failed after all retries   |
+| `video.ready`         | All transcode jobs for a video completed |
+
+### Webhook Payload
+
+```json
+{
+  "event": "transcode.completed",
+  "timestamp": "2025-01-01T00:05:00Z",
+  "data": {
+    "video_id": "uuid",
+    "job_id": "uuid",
+    "preset": "1080p Standard",
+    "duration_seconds": 120.5,
+    "output_size_bytes": 26214400
+  }
+}
+```
+
+**Signature verification** — Each delivery includes:
+
+| Header              | Description                                                                     |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `X-GoMPP-Signature` | `sha256={hmac_hex}` — HMAC-SHA256 of the raw JSON body using the webhook secret |
+| `X-GoMPP-Event`     | Event type (e.g., `transcode.completed`)                                        |
+| `Content-Type`      | `application/json`                                                              |
+
+---
+
+## API Keys
+
+### List API Keys
+
+`GET /api-keys`
+
+### Create API Key
+
+`POST /api-keys`
+
+```json
+// Request
+{
+  "name": "CI Pipeline",
+  "scopes": ["videos.read", "videos.write"],
+  "expires_at": "2026-01-01T00:00:00Z"
+}
+
+// Response (201 Created)
+{
+  "api_key": {
+    "id": "uuid",
+    "name": "CI Pipeline",
+    "key_prefix": "gompp_ab",
+    "scopes": ["videos.read", "videos.write"],
+    "is_active": true
+  },
+  "plain_key": "gompp_abc123..."  // Only shown once
+}
+```
+
+<Callout type="error">
+  The `plain_key` is only returned at creation time. It cannot be retrieved
+  later.
+</Callout>
+
+### Update API Key
+
+`PUT /api-keys/{id}`
+
+```json
+{ "name": "New Name", "scopes": ["videos.read"], "is_active": false }
+```
+
+### Delete API Key
+
+`DELETE /api-keys/{id}` → `204 No Content`
+
+---
+
+## Users
+
+### List Users
+
+**Admin** · `GET /users?page=1&per_page=20&search=john&role=user`
+
+### Create User
+
+**Admin** · `POST /users`
+
+```json
+{
+  "email": "new@example.com",
+  "username": "newuser",
+  "password": "securepassword",
+  "role": "user"
+}
+```
+
+### Get User
+
+`GET /users/{id}` — Admin or self only.
+
+### Update User
+
+`PUT /users/{id}`
+
+Admin can change `role` and `is_active`. Users can update their own `email` and `username`.
+
+### Change Password
+
+`PUT /users/{id}/password`
+
+```json
+{ "new_password": "newsecurepassword" }
+```
+
+Admin or self only. Minimum 8 characters.
+
+### Delete (Deactivate) User
+
+**Admin** · `DELETE /users/{id}` → `204 No Content`
+
+Sets `is_active = false` (does not delete data).
+
+---
+
+## Analytics
+
+### System Overview
+
+`GET /analytics/overview?period=30d`
+
+```json
+{
+  "total_videos": 150,
+  "total_views": 25000,
+  "total_bandwidth_bytes": 1073741824,
+  "storage_used_bytes": 5368709120,
+  "active_jobs": 3,
+  "period": "30d"
+}
+```
+
+### Top Videos
+
+`GET /analytics/top-videos?period=30d&limit=10`
+
+### Video Analytics
+
+`GET /analytics/videos/{id}`
+
+```json
+{
+  "video_id": "uuid",
+  "total_views": 1234,
+  "total_bandwidth_bytes": 104857600,
+  "avg_watch_duration": 85.2,
+  "completion_rate": 0.72
+}
+```
+
+### Bandwidth
+
+`GET /analytics/bandwidth?period=30d&granularity=day`
+
+```json
+[
+  { "date": "2025-01-01", "bytes": 10485760 },
+  { "date": "2025-01-02", "bytes": 20971520 }
+]
+```
+
+### Device Types
+
+`GET /analytics/device-types?period=30d`
+
+```json
+[
+  { "device_type": "desktop", "count": 15000 },
+  { "device_type": "mobile", "count": 8000 },
+  { "device_type": "tablet", "count": 2000 }
+]
+```
+
+### Traffic Series
+
+`GET /analytics/traffic?period=30d&granularity=day`
+
+```json
+[
+  { "date": "2025-01-01", "views": 500 },
+  { "date": "2025-01-02", "views": 750 }
+]
+```
+
+---
+
+## Settings
+
+### Get All Settings
+
+**Public** · `GET /settings`
+
+```json
+[
+  { "key": "site_name", "value": "GoMPP", "updated_at": "..." },
+  { "key": "theme_color", "value": "#6366f1", "updated_at": "..." }
+]
+```
+
+### Get Single Setting
+
+**Public** · `GET /settings/{key}`
+
+### Update Setting
+
+**Admin** · `PUT /settings/{key}`
+
+```json
+{ "value": "New Site Name" }
+```
+
+### Bulk Update
+
+**Admin** · `PUT /settings`
+
+```json
+{
+  "settings": [
+    { "key": "site_name", "value": "My Platform" },
+    { "key": "theme_color", "value": "#10b981" }
+  ]
+}
+```
+
+### Verify FFmpeg
+
+**Admin** · `POST /settings/verify-ffmpeg`
+
+```json
+// Request (optional)
+{ "path": "/usr/bin/ffmpeg" }
+
+// Response (200 OK)
+{
+  "valid": true,
+  "version": "ffmpeg version 7.0.2 ..."
+}
+```
+
+---
+
+## Subtitles
+
+### Search (OpenSubtitles)
+
+`GET /subtitles/search?query=movie+name&language=en`
+
+### Download (OpenSubtitles)
+
+`POST /subtitles/download`
+
+### List Languages
+
+`GET /subtitles/languages`
+
+### Video Subtitles
+
+`GET /videos/{id}/subtitles` — List attached subtitles
+
+`POST /videos/{id}/subtitles/upload` · `multipart/form-data` — Upload subtitle file
+
+`POST /videos/{id}/subtitles` — Attach existing subtitle
+
+`DELETE /videos/{id}/subtitles/{subtitleId}` → `204 No Content`
+
+---
+
+## Account
+
+### Sessions
+
+`GET /account/sessions` — List device sessions
+
+`POST /account/sessions` — Create session record
+
+`DELETE /account/sessions/{id}` — Delete session
+
+### Avatar
+
+`POST /account/avatar` · `multipart/form-data` — Upload avatar
+
+`DELETE /account/avatar` — Remove avatar
+
+### Google Account
+
+`POST /account/google/link` — Link Google account
+
+`DELETE /account/google/link` — Unlink Google account
+
+### Passkeys
+
+`GET /account/passkeys` — List registered passkeys
+
+`POST /account/passkeys/register/begin` — Start passkey registration
+
+`POST /account/passkeys/register/finish` — Complete registration
+
+`PUT /account/passkeys/{id}` — Rename passkey
+
+`DELETE /account/passkeys/{id}` — Delete passkey
+
+---
+
+## Embed Player
+
+**Public (no auth, rate limited)**
+
+`GET /embed/{id}` — HTML embed player page
+
+`GET /embed/{id}/stream/*` — HLS stream serving for embedded player
+
+---
+
+## Media Serving
+
+**Public (no auth)**
+
+| Endpoint                          | Description                           |
+| --------------------------------- | ------------------------------------- |
+| `GET /transcoded/*`               | Transcoded HLS segments and playlists |
+| `GET /subtitles/serve/{id}`       | Subtitle file serving                 |
+| `GET /subtitles/public/{videoId}` | Public subtitle list                  |
+| `GET /avatars/*`                  | User avatar images                    |
+
+---
+
+## Health & Metrics
+
+**Public**
+
+`GET /health`
+
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "database": "connected"
+}
+```
+
+`GET /metrics` — Prometheus-format metrics (see [Monitoring](/docs/monitoring)).

@@ -1,0 +1,59 @@
+---
+title: GoMPP Documentation
+description: Comprehensive documentation for GoMPP — the open-source video transcoding and streaming platform.
+---
+
+Welcome to the official GoMPP documentation. GoMPP is a self-hosted, open-source video transcoding and streaming platform built with **Go** and **Next.js**, powered by **FFmpeg**.
+
+## What is GoMPP?
+
+GoMPP is a complete video management solution that enables you to upload, transcode, manage, and stream video content through HLS adaptive bitrate streaming. It provides a modern dashboard for managing videos, encoding presets, users, webhooks, and system-wide settings.
+
+## Key Features
+
+- **Adaptive Bitrate Transcoding** — Automatically encode videos into multiple resolutions with HLS output
+- **Hardware Acceleration** — Support for NVENC, QSV, and VAAPI GPU-accelerated encoding
+- **Multi-Codec Support** — H.264, H.265/HEVC, VP9, and AV1
+- **Embeddable Player** — Built-in Shaka Player and Vidstack with configurable controls
+- **Subtitle Integration** — OpenSubtitles search, manual upload (SRT, VTT, ASS), and in-player caption options
+- **Content Security** — AES-128 and Sample-AES encryption, signed URLs with HMAC verification
+- **Authentication** — JWT tokens, API keys, Google OAuth, and WebAuthn passkeys
+- **Real-time Analytics** — Video views, bandwidth, device types, and traffic monitoring with Prometheus + Grafana
+- **Webhook System** — Event-driven notifications with HMAC-signed payloads and automatic retries
+- **S3-Compatible Storage** — Local filesystem or any S3-compatible object storage
+- **Internationalization** — English, Arabic (RTL), Spanish, German, and Chinese
+
+## Quick Navigation
+
+<Cards>
+  <Card
+    title="Getting Started"
+    href="/docs/getting-started"
+    description="Install and run GoMPP in minutes"
+  />
+  <Card
+    title="Architecture"
+    href="/docs/architecture"
+    description="Understand how GoMPP is designed"
+  />
+  <Card
+    title="Configuration"
+    href="/docs/configuration"
+    description="Environment variables and settings"
+  />
+  <Card
+    title="API Reference"
+    href="/docs/api-reference"
+    description="Complete REST API documentation"
+  />
+  <Card
+    title="Deployment"
+    href="/docs/deployment"
+    description="Docker, production, and scaling guides"
+  />
+  <Card
+    title="Frontend Guide"
+    href="/docs/frontend"
+    description="Next.js dashboard and components"
+  />
+</Cards>

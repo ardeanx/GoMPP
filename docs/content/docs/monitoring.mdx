@@ -1,0 +1,278 @@
+---
+title: Monitoring
+description: Prometheus metrics, Grafana dashboards, health checks, and alerting.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+GoMPP exposes comprehensive Prometheus metrics for HTTP requests, transcoding, storage, database, authentication, and webhook delivery. The Docker Compose stack includes pre-configured Prometheus and Grafana instances.
+
+---
+
+## Endpoints
+
+| Endpoint       | Description                                               |
+| -------------- | --------------------------------------------------------- |
+| `GET /health`  | Application health check (database connectivity, version) |
+| `GET /metrics` | Prometheus metrics in text exposition format              |
+
+Both endpoints are public and do not require authentication.
+
+### Health Check
+
+```json
+// GET /health
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "database": "connected"
+}
+```
+
+Returns `200 OK` when the database is reachable, `503 Service Unavailable` otherwise.
+
+---
+
+## Prometheus Metrics
+
+All metrics use the `gompp_` prefix.
+
+### HTTP Metrics
+
+| Metric                                | Type      | Labels                     | Description                   |
+| ------------------------------------- | --------- | -------------------------- | ----------------------------- |
+| `gompp_http_requests_total`           | Counter   | `method`, `path`, `status` | Total HTTP requests           |
+| `gompp_http_request_duration_seconds` | Histogram | `method`, `path`           | Request latency               |
+| `gompp_http_requests_in_flight`       | Gauge     | —                          | Currently processing requests |
+
+**Latency buckets:** 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
+
+### Transcoding Metrics
+
+| Metric                                 | Type      | Labels                | Description                                      |
+| -------------------------------------- | --------- | --------------------- | ------------------------------------------------ |
+| `gompp_transcode_jobs_total`           | Counter   | `status`              | Transcode jobs by status (`completed`, `failed`) |
+| `gompp_transcode_job_duration_seconds` | Histogram | `codec`, `resolution` | Job duration by codec and resolution             |
+| `gompp_transcode_queue_depth`          | Gauge     | —                     | Pending jobs waiting for workers                 |
+| `gompp_transcode_workers_active`       | Gauge     | —                     | Workers currently processing a job               |
+
+**Duration buckets:** 1s, 5s, 10s, 30s, 60s, 120s, 5min, 10min, 30min, 1h
+
+### Video Metrics
+
+| Metric                           | Type    | Labels | Description                |
+| -------------------------------- | ------- | ------ | -------------------------- |
+| `gompp_videos_total`             | Gauge   | —      | Total videos in the system |
+| `gompp_video_uploads_total`      | Counter | —      | Total uploads              |
+| `gompp_video_upload_bytes_total` | Counter | —      | Total bytes uploaded       |
+
+### Storage Metrics
+
+| Metric                                     | Type      | Labels                 | Description                                 |
+| ------------------------------------------ | --------- | ---------------------- | ------------------------------------------- |
+| `gompp_storage_operations_total`           | Counter   | `operation`, `backend` | Storage operations (put, get, delete, etc.) |
+| `gompp_storage_operation_duration_seconds` | Histogram | `operation`, `backend` | Operation latency                           |
+| `gompp_storage_operation_errors_total`     | Counter   | `operation`, `backend` | Failed operations                           |
+
+**Latency buckets:** 1ms, 5ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s
+
+### Database Metrics
+
+| Metric                            | Type      | Labels  | Description                 |
+| --------------------------------- | --------- | ------- | --------------------------- |
+| `gompp_db_query_duration_seconds` | Histogram | `query` | Query latency by query name |
+| `gompp_db_connections_active`     | Gauge     | —       | Active database connections |
+| `gompp_db_connections_idle`       | Gauge     | —       | Idle database connections   |
+
+**Latency buckets:** 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s
+
+### Authentication Metrics
+
+| Metric                      | Type    | Labels             | Description                        |
+| --------------------------- | ------- | ------------------ | ---------------------------------- |
+| `gompp_auth_attempts_total` | Counter | `method`, `result` | Auth attempts by method and result |
+
+**Method values:** `jwt`, `api_key`
+**Result values:** `success`, `invalid`, `disabled`, `expired`
+
+### Webhook Metrics
+
+| Metric                                    | Type      | Labels             | Description                          |
+| ----------------------------------------- | --------- | ------------------ | ------------------------------------ |
+| `gompp_webhook_deliveries_total`          | Counter   | `event`, `success` | Deliveries by event type and success |
+| `gompp_webhook_delivery_duration_seconds` | Histogram | `event`            | Delivery latency by event            |
+
+**Latency buckets:** 10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
+
+---
+
+## Prometheus Configuration
+
+The Docker Compose stack includes Prometheus pre-configured to scrape the GoMPP API:
+
+```yaml
+# deployments/prometheus/prometheus.yml
+scrape_configs:
+  - job_name: gompp-api
+    static_configs:
+      - targets: ["gompp-api:8080"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+```
+
+Access Prometheus at `http://localhost:9090`.
+
+**Data retention:** 30 days (configurable via `--storage.tsdb.retention.time`).
+
+---
+
+## Grafana
+
+Grafana is pre-configured with Prometheus as a data source and pre-built dashboards.
+
+| Property      | Value                                                   |
+| ------------- | ------------------------------------------------------- |
+| URL           | `http://localhost:3001`                                 |
+| Default login | `admin` / `gompp`                                       |
+| Data source   | Prometheus (auto-provisioned)                           |
+| Dashboards    | Auto-provisioned from `deployments/grafana/dashboards/` |
+
+<Callout type="warn">
+  Change the Grafana admin password before deploying to production. Set
+  `GF_SECURITY_ADMIN_PASSWORD` in the Docker Compose environment.
+</Callout>
+
+### Useful Queries
+
+**Request rate (per second):**
+
+```
+rate(gompp_http_requests_total[5m])
+```
+
+**P95 request latency:**
+
+```
+histogram_quantile(0.95, rate(gompp_http_request_duration_seconds_bucket[5m]))
+```
+
+**Error rate (5xx):**
+
+```
+rate(gompp_http_requests_total{status=~"5.."}[5m])
+```
+
+**Active transcoding workers:**
+
+```
+gompp_transcode_workers_active
+```
+
+**Transcode queue depth:**
+
+```
+gompp_transcode_queue_depth
+```
+
+**Average transcode job duration by codec:**
+
+```
+rate(gompp_transcode_job_duration_seconds_sum[1h])
+/ rate(gompp_transcode_job_duration_seconds_count[1h])
+```
+
+**Upload throughput (MB/s):**
+
+```
+rate(gompp_video_upload_bytes_total[5m]) / 1024 / 1024
+```
+
+**Failed auth attempts:**
+
+```
+rate(gompp_auth_attempts_total{result!="success"}[5m])
+```
+
+**Storage error rate:**
+
+```
+rate(gompp_storage_operation_errors_total[5m])
+```
+
+**Database connection utilisation:**
+
+```
+gompp_db_connections_active / (gompp_db_connections_active + gompp_db_connections_idle)
+```
+
+---
+
+## Alerting
+
+Alert rules are defined in `deployments/prometheus/alerts.yml`. Recommended alerts:
+
+| Alert                          | Condition                                                         | Severity |
+| ------------------------------ | ----------------------------------------------------------------- | -------- |
+| High error rate                | `rate(gompp_http_requests_total{status=~"5.."}[5m]) > 0.1`        | Critical |
+| Queue backlog                  | `gompp_transcode_queue_depth > 50`                                | Warning  |
+| No active workers              | `gompp_transcode_workers_active == 0`                             | Critical |
+| High latency                   | P95 > 5s for 5 minutes                                            | Warning  |
+| Database connections exhausted | Active connections > 80% of max                                   | Critical |
+| Webhook delivery failures      | `rate(gompp_webhook_deliveries_total{success="false"}[5m]) > 0.5` | Warning  |
+| Auth brute-force               | `rate(gompp_auth_attempts_total{result="invalid"}[5m]) > 1`       | Warning  |
+
+---
+
+## Logging
+
+GoMPP uses [zerolog](https://github.com/rs/zerolog) for structured logging.
+
+### Configuration
+
+| Variable           | Default   | Options                                  |
+| ------------------ | --------- | ---------------------------------------- |
+| `GOMPP_LOG_LEVEL`  | `info`    | `debug`, `info`, `warn`, `error`         |
+| `GOMPP_LOG_FORMAT` | `console` | `console` (colored), `json` (structured) |
+
+### Log Fields
+
+Each HTTP request log includes:
+
+| Field        | Description               |
+| ------------ | ------------------------- |
+| `method`     | HTTP method               |
+| `path`       | Request path              |
+| `status`     | Response status code      |
+| `bytes`      | Response body size        |
+| `latency`    | Request duration          |
+| `ip`         | Client IP address         |
+| `request_id` | Unique request identifier |
+
+<Callout type="info">
+  Use `GOMPP_LOG_FORMAT=json` in production for compatibility with log
+  aggregation tools (ELK, Loki, CloudWatch).
+</Callout>
+
+### Example Logs
+
+**Console format:**
+
+```
+12:34:56 INF method=GET path=/api/v1/videos status=200 bytes=1024 latency=45ms ip=192.168.1.1 request_id=abc123
+```
+
+**JSON format:**
+
+```json
+{
+  "level": "info",
+  "method": "GET",
+  "path": "/api/v1/videos",
+  "status": 200,
+  "bytes": 1024,
+  "latency": "45ms",
+  "ip": "192.168.1.1",
+  "request_id": "abc123",
+  "time": "2025-01-01T12:34:56Z"
+}
+```

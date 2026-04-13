@@ -1,0 +1,285 @@
+---
+title: Security
+description: Authentication methods, authorisation, rate limiting, encryption, and security headers.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+GoMPP implements a multi-layered security model covering authentication, authorisation, transport security, content encryption, and input validation.
+
+---
+
+## Authentication Methods
+
+GoMPP supports four authentication methods. Multiple methods can be enabled simultaneously.
+
+### Email + Password
+
+The default authentication method. Passwords are hashed with **bcrypt** (cost factor 12).
+
+- **Registration** — `POST /api/v1/auth/register` creates an account with validated email, username (3–30 chars), and password (8+ chars)
+- **Login** — `POST /api/v1/auth/login` returns JWT access and refresh tokens
+- **Password change** — `PUT /api/v1/users/{id}/password` sets a new password and records `password_changed_at`
+
+### JWT Tokens
+
+GoMPP uses stateless JWT tokens signed with **HMAC-SHA256 (HS256)**:
+
+| Token         | Default Lifetime | Purpose                  |
+| ------------- | ---------------- | ------------------------ |
+| Access token  | 60 minutes       | API authentication       |
+| Refresh token | 7 days           | Obtain new access tokens |
+
+Token claims:
+
+```json
+{
+  "sub": "user-uuid",
+  "role": "user",
+  "token_type": "access",
+  "exp": 1234567890,
+  "iat": 1234567890
+}
+```
+
+The `token_type` claim prevents refresh tokens from being used as access tokens.
+
+<Callout type="error">
+  The JWT secret (`GOMPP_JWT_SECRET`) must be a strong random value. Generate
+  with: `openssl rand -hex 32`. The server refuses to start without it.
+</Callout>
+
+### Google OAuth2
+
+When `GOMPP_GOOGLE_CLIENT_ID` is configured:
+
+1. Frontend obtains a Google ID token via the Google Sign-In SDK
+2. Backend validates the ID token against Google's public keys
+3. If the Google `sub` matches an existing user, tokens are issued
+4. If no match, a new user is created with the Google email and a random password
+
+Users can link/unlink their Google account from the account settings page.
+
+### WebAuthn / Passkeys (FIDO2)
+
+When `GOMPP_WEBAUTHN_RP_ID` and `GOMPP_WEBAUTHN_RP_ORIGINS` are configured:
+
+- **Registration** — Two-step flow: `begin` returns `CredentialCreationOptions`, `finish` stores the credential
+- **Login** — Discoverable credentials: `begin` returns `CredentialRequestOptions`, `finish` validates the assertion
+- **Credentials stored** — `user_credentials` table with `credential_id`, `public_key`, `sign_count` (replay prevention)
+- **Backup flags** — `backup_eligible` and `backup_state` tracked per credential
+
+<Callout type="info">
+  WebAuthn requires HTTPS in production. Set `GOMPP_WEBAUTHN_RP_ID` to your
+  domain (e.g., `example.com`) and `GOMPP_WEBAUTHN_RP_ORIGINS` to your full
+  origin (e.g., `https://example.com`).
+</Callout>
+
+### API Keys
+
+For programmatic access (CI/CD, integrations):
+
+- **Format** — `gompp_` prefix + random string
+- **Storage** — SHA-256 hash stored in `api_keys` table; plain text is only returned at creation
+- **Scopes** — Optional permission scopes (e.g., `videos.read`, `videos.write`)
+- **Expiry** — Optional `expires_at` timestamp
+- **Usage tracking** — `last_used_at` updated on each API call
+- **Header** — `X-API-Key: gompp_abc123...`
+
+---
+
+## Authorisation
+
+### Role-Based Access Control (RBAC)
+
+| Role          | Permissions                                    |
+| ------------- | ---------------------------------------------- |
+| `super_admin` | Full system access, cannot be deactivated      |
+| `admin`       | User management, settings, all CRUD operations |
+| `staff`       | Elevated user (future expansion)               |
+| `user`        | Own videos, webhooks, API keys, profile        |
+
+The `RequireAdmin` middleware enforces admin-only routes. Non-admin users can only access their own resources — the repository layer filters by `user_id` automatically.
+
+### Resource Ownership
+
+- Videos, webhooks, and API keys are scoped to the creating user
+- `GET /videos` returns only the current user's videos (admin sees all)
+- Update and delete operations check ownership (or admin role)
+- User profile endpoints allow self-service or admin access
+
+---
+
+## Rate Limiting
+
+Two independent per-IP rate limiters protect against brute-force and abuse:
+
+| Limiter | Routes            | Default    | Purpose                     |
+| ------- | ----------------- | ---------- | --------------------------- |
+| Auth    | `/auth/*`         | 10 req/min | Prevent credential stuffing |
+| General | All authenticated | 60 req/min | Prevent API abuse           |
+
+Configuration:
+
+1. **Environment** — `GOMPP_RATELIMIT_AUTH_RPM`, `GOMPP_RATELIMIT_GENERAL_RPM`
+2. **Database** — `system_settings` keys: `auth_rate_limit_rpm`, `rate_limit_rpm`
+3. **Hot reload** — Background goroutine polls the database every 30 seconds
+
+When exceeded:
+
+```
+HTTP 429 Too Many Requests
+Retry-After: 60
+
+{"error":{"code":"RATE_LIMITED","message":"too many requests"}}
+```
+
+---
+
+## Security Headers
+
+The `SecureHeaders` middleware sets the following headers on every response:
+
+| Header                      | Value                                 | Purpose                    |
+| --------------------------- | ------------------------------------- | -------------------------- |
+| `X-Content-Type-Options`    | `nosniff`                             | Prevent MIME-type sniffing |
+| `X-Frame-Options`           | `DENY`                                | Prevent clickjacking       |
+| `X-XSS-Protection`          | `1; mode=block`                       | XSS filter hint            |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Force HTTPS                |
+
+---
+
+## CORS
+
+Cross-Origin Resource Sharing is configured via `GOMPP_SERVER_CORS_ORIGINS`:
+
+```bash
+GOMPP_SERVER_CORS_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+Settings:
+
+| Parameter       | Value                                  |
+| --------------- | -------------------------------------- |
+| Allowed methods | GET, POST, PUT, DELETE, PATCH, OPTIONS |
+| Credentials     | Allowed                                |
+| Max age         | 3600 seconds                           |
+
+<Callout type="warn">
+  In development, origins are typically
+  `http://localhost:3000,http://localhost:8080`. In production, restrict to your
+  actual domain(s).
+</Callout>
+
+---
+
+## Content Encryption
+
+HLS streams can be encrypted at rest and in transit using AES encryption configured per preset:
+
+| Mode         | Description                           |
+| ------------ | ------------------------------------- |
+| `none`       | No encryption (default)               |
+| `aes-128`    | Full segment encryption (AES-128-CBC) |
+| `sample-aes` | Sample-level encryption (MPEG-2 TS)   |
+
+The encryption key is:
+
+- Generated randomly (16 bytes) per transcode job
+- Stored as `enc.key` in the output directory
+- Referenced in the HLS playlist via `#EXT-X-KEY` tags
+- Optionally rotated at a configurable interval (`key_rotation_interval`)
+
+### Signed URLs
+
+When `signed_url_enabled` is true on a preset:
+
+```
+/transcoded/.../playlist.m3u8?sig={hmac}&exp={timestamp}
+```
+
+- **Signature** — HMAC-SHA256 of `path + expiry` using the JWT secret
+- **Expiry** — Unix timestamp (default: 3600 seconds from generation)
+- **Validation** — Every playlist and segment request is checked
+
+This prevents direct URL sharing and hotlinking.
+
+---
+
+## Webhook Signature Verification
+
+Webhook deliveries include an HMAC-SHA256 signature for payload verification:
+
+```
+X-GoMPP-Signature: sha256={hex_digest}
+```
+
+To verify in your endpoint:
+
+```python
+import hmac
+import hashlib
+
+def verify_webhook(payload_bytes, signature_header, secret):
+    expected = hmac.new(
+        secret.encode(), payload_bytes, hashlib.sha256
+    ).hexdigest()
+    received = signature_header.replace("sha256=", "")
+    return hmac.compare_digest(expected, received)
+```
+
+The webhook secret is only shown when creating or regenerating — store it securely.
+
+---
+
+## Input Validation
+
+### Server-Side
+
+- All SQL queries use parameterised placeholders (`$1, $2, ...`) — no string concatenation
+- File uploads have size limits (32 MB buffer for video, 10 MB for thumbnails)
+- Username: 3–30 chars, alphanumeric + `_` and `-`
+- Password: minimum 8 characters
+- Email: standard format validation
+- Webhook URLs: must be valid HTTPS URLs
+- Storage paths: traversal protection (`LocalBackend.safePath()` validates paths stay within the base directory)
+
+### Client-Side
+
+- React Hook Form with Zod schema validation
+- Real-time field validation with error messages
+- reCAPTCHA v2 support (optional, via `RECAPTCHA_SECRET_KEY`)
+
+---
+
+## Storage Security
+
+### Local Backend
+
+The `LocalBackend` includes **path traversal protection**:
+
+```go
+func (l *LocalBackend) safePath(path string) string {
+    // Ensures resolved path stays within BasePath
+    // Prevents ../../ traversal attacks
+}
+```
+
+### S3 Backend
+
+- Uses AWS SDK v2 with configured credentials
+- Supports IAM roles, access keys, or instance profiles
+- Bucket policies should restrict public access
+
+---
+
+## Best Practices
+
+1. **Always use HTTPS** in production — required for WebAuthn, recommended for everything
+2. **Rotate the JWT secret** periodically — this invalidates all existing tokens
+3. **Set strong database credentials** — change from defaults before deploying
+4. **Restrict CORS origins** — never use `*` in production
+5. **Monitor rate limit hits** — frequent 429s may indicate an attack
+6. **Review API key scopes** — grant minimum necessary permissions
+7. **Enable signed URLs** for paid or private content
+8. **Back up encryption keys** if using AES-128 — lost keys mean unplayable content

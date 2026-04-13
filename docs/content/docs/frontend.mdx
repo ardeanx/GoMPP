@@ -1,0 +1,270 @@
+---
+title: Frontend Guide
+description: Architecture, patterns, and developer guide for the GoMPP Next.js frontend.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+The GoMPP frontend is a **Next.js App Router** application built with TypeScript, Tailwind CSS, and a Metronic-inspired component library. It communicates with the Go backend API over HTTP.
+
+---
+
+## Project Layout
+
+```
+web/
+  app/
+    layout.tsx                  # Root layout (providers, fonts, toasts)
+    (auth)/                     # Auth pages (signin, signup, etc.)
+    (landing)/                  # Public marketing homepage
+    (protected)/                # Protected dashboard routes
+      analytics/                # Dashboard & charts
+      library/                  # Video management
+      settings/                 # System settings (admin)
+      account/                  # User profile
+      users/                    # User management (admin)
+      ads/                      # Ad management
+  components/
+    ui/                         # 80+ reusable UI components
+    layouts/                    # Page layout wrappers
+  config/
+    general.config.ts           # Site links (docs, license)
+    layout.config.tsx           # Sidebar menu items
+    types.ts                    # MenuItem, Settings interfaces
+  hooks/                        # 11 custom React hooks
+  i18n/                         # Internationalisation (5 languages)
+  lib/                          # API client, helpers, utilities
+  providers/                    # 6 React Context providers
+  public/media/                 # Static assets
+  styles/                       # Global CSS, theme overrides
+```
+
+---
+
+## Provider Architecture
+
+The root layout wraps the entire application in a nested provider stack:
+
+```tsx
+<QueryProvider>
+  {" "}
+  {/* TanStack React Query */}
+  <AuthProvider>
+    {" "}
+    {/* JWT auth state, token refresh */}
+    <ThemeProvider>
+      {" "}
+      {/* next-themes: light/dark/system */}
+      <SettingsProvider>
+        {" "}
+        {/* UI preferences (sidebar, locale) */}
+        <TooltipProvider>
+          <ThemeColorApplier>
+            {" "}
+            {/* Dynamic CSS from branding settings */}
+            {children}
+            <Toaster /> {/* Sonner toast notifications */}
+          </ThemeColorApplier>
+        </TooltipProvider>
+      </SettingsProvider>
+    </ThemeProvider>
+  </AuthProvider>
+</QueryProvider>
+```
+
+### Provider Details
+
+| Provider              | Key Features                                                                                                          |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **QueryProvider**     | 2 retries (skips 401s), 30 s stale time, global error toasts                                                          |
+| **AuthProvider**      | Token storage in `localStorage`, automatic refresh, multi-method login (email, Google, WebAuthn)                      |
+| **ThemeProvider**     | Light / dark / system modes via `next-themes`, CSS custom properties                                                  |
+| **SettingsProvider**  | Dotted-path access (e.g., `layout.sidebar.collapsed`), `localStorage` persistence                                     |
+| **I18nProvider**      | 5 languages (en, ar, es, de, zh), RTL support for Arabic, `localStorage` detection                                    |
+| **ThemeColorApplier** | Fetches branding from `/api/v1/settings`, applies `theme_color`, `site_logo`, `site_favicon` as CSS custom properties |
+
+---
+
+## API Client
+
+All backend communication goes through a single function in `lib/api.ts`:
+
+```typescript
+apiClient<T>(path: string, options?: RequestInit): Promise<T>
+```
+
+Features:
+
+- Prepends `NEXT_PUBLIC_API_URL` to all paths
+- Sets `Authorization: Bearer {token}` from `localStorage`
+- Detects `FormData` body and skips `Content-Type` (lets the browser set multipart boundaries)
+- On `401`, attempts a single token refresh then retries the original request
+- Token keys: `gompp_access_token`, `gompp_refresh_token`
+
+---
+
+## Services (React Query Hooks)
+
+Each domain has a service file that exports TanStack React Query hooks:
+
+| Service       | Hooks                                                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **videos**    | `useVideos`, `useVideo`, `useUploadVideo`, `useUpdateVideo`, `useDeleteVideo`, `useRetranscodeVideo`, `useThumbnails` |
+| **analytics** | `useAnalyticsOverview`, `useTopVideos`, `useBandwidth`, `useDeviceTypes`, `useTrafficSeries`                          |
+| **account**   | `useAccountSessions`, `useUploadAvatar`, `usePasskeys`, `useLinkGoogle`, `useAuthProviders`                           |
+| **settings**  | `useSystemSettings`, `useUpdateSystemSetting`, `useBulkUpdateSettings`, `useVerifyFFmpeg`                             |
+| **users**     | `useUsers`, `useCreateUser`, `useUpdateUser`, `useDeleteUser`, `useChangePassword`                                    |
+| **presets**   | `usePresets`, `usePreset`, `useCreatePreset`, `useUpdatePreset`, `useDeletePreset`                                    |
+| **subtitles** | `useSubtitles`, `useUploadSubtitle`, `useDeleteSubtitle`, `useSearchSubtitles`                                        |
+| **webhooks**  | `useWebhooks`, `useWebhook`, `useCreateWebhook`, `useUpdateWebhook`, `useDeleteWebhook`                               |
+
+Mutations automatically invalidate related query caches on success.
+
+---
+
+## Route Groups
+
+### Auth Pages (`/(auth)/`)
+
+| Route              | Page                                   |
+| ------------------ | -------------------------------------- |
+| `/signin`          | Email/password, Google, WebAuthn login |
+| `/signup`          | Registration form                      |
+| `/verify-email`    | Email verification                     |
+| `/reset-password`  | Password reset request                 |
+| `/change-password` | Password change form                   |
+
+Auth pages support two layout variants:
+
+- **Branded** — Full-width background with centred card, site logo
+- **Classic** — Split layout with illustration panel
+
+### Landing Page (`/(landing)/`)
+
+Public marketing homepage with:
+
+- Hero section with word-rotate animation
+- Feature grid
+- Contact card grid
+- Floating pill-shaped navigation header with GitHub stars
+
+### Protected Dashboard (`/(protected)/`)
+
+All routes require authentication. The layout includes a collapsible sidebar and top navbar.
+
+| Route           | Access                 | Description                                                                          |
+| --------------- | ---------------------- | ------------------------------------------------------------------------------------ |
+| `/analytics`    | All users              | Dashboard with stats cards, charts (Recharts), period selector                       |
+| `/library`      | All users              | Video grid with pagination, search, bulk operations, upload dialog                   |
+| `/library/{id}` | All users              | Video detail: metadata, player, job status, thumbnails, subtitles                    |
+| `/settings`     | Admin                  | 8 tabs: System, Player, Notification, Encoding, Security, Transcribing, Payment, API |
+| `/account`      | All users              | Avatar, sessions, passkeys, Google linking, password change                          |
+| `/users`        | Admin                  | User CRUD grid with role assignment                                                  |
+| `/presets`      | All (admin for writes) | Encoding preset management                                                           |
+| `/ads`          | Admin                  | Ad placement management                                                              |
+
+---
+
+## Custom Hooks
+
+| Hook                      | Purpose                                                      |
+| ------------------------- | ------------------------------------------------------------ |
+| `useFileUpload(options)`  | Multi-file upload with drag-drop zones, validation, previews |
+| `useMenu(pathname)`       | Active menu item detection, breadcrumb generation            |
+| `useIsMobile()`           | Responsive breakpoint detection (1024 px)                    |
+| `useMounted()`            | SSR hydration safety flag                                    |
+| `useCopyToClipboard()`    | Clipboard write with success feedback                        |
+| `useRecaptchaV2(siteKey)` | reCAPTCHA v2 widget management                               |
+| `useScrollPosition()`     | Tracks window scroll Y position                              |
+| `useSliderInput()`        | Synchronises range slider with number input                  |
+| `useViewport()`           | Window dimensions `[width, height]`                          |
+| `useBodyClass(className)` | Manages CSS classes on `<body>`                              |
+| `useTranslation()`        | i18next wrapper with formatting helpers                      |
+
+---
+
+## UI Components
+
+The `components/ui/` directory contains **80+ components** built with Radix UI primitives and Tailwind CSS:
+
+**Data Display** — `data-grid`, `table`, `badge`, `avatar`, `breadcrumb`, `card`
+**Forms** — `form`, `input`, `select`, `checkbox`, `radio-group`, `switch`, `textarea`, `file-upload`
+**Layout** — `tabs`, `accordion`, `collapsible`, `separator`, `scroll-area`, `navigation-menu`
+**Overlays** — `dialog`, `alert-dialog`, `drawer`, `sheet`, `popover`, `dropdown-menu`, `context-menu`, `tooltip`, `hover-card`
+**Charts** — Recharts-based `chart` component
+**Animations** — `carousel`, `gradient-background`, `word-rotate`, `shimmering-text`, `text-reveal`, `typing-text`, `marquee`, `hero-video-dialog`
+
+All components use the `cn()` utility (`tailwind-merge` + `clsx`) for conditional class merging.
+
+---
+
+## Internationalisation (i18n)
+
+GoMPP supports 5 languages via `i18next`:
+
+| Code | Language | Direction |
+| ---- | -------- | --------- |
+| `en` | English  | LTR       |
+| `ar` | Arabic   | RTL       |
+| `es` | Spanish  | LTR       |
+| `de` | German   | LTR       |
+| `zh` | Chinese  | LTR       |
+
+- Language selection is persisted in `localStorage` under the `language` key
+- The `I18nProvider` auto-detects browser language on first visit
+- Arabic triggers automatic RTL layout switching
+- Message files are stored in `i18n/messages/{locale}.json`
+- `Intl` formatters handle date, time, number, and currency localisation
+
+---
+
+## Theming
+
+### CSS Custom Properties
+
+The `ThemeColorApplier` component fetches branding settings from the backend and applies them as CSS variables:
+
+- `--theme-color` — Primary accent colour (from `theme_color` system setting)
+- Site logo and favicon are dynamically applied from `site_logo` and `site_favicon` settings
+
+### Dark Mode
+
+Implemented via `next-themes` with three modes: `light`, `dark`, `system`. The theme preference is persisted in `localStorage`.
+
+### Tailwind Configuration
+
+Tailwind is configured with:
+
+- Extended colour tokens mapped to CSS custom properties
+- Custom animation keyframes for landing page effects
+- Responsive breakpoints and container queries
+
+---
+
+## Key Patterns
+
+| Pattern              | Implementation                                                  |
+| -------------------- | --------------------------------------------------------------- |
+| **Protected routes** | `AuthGuard` wrapper redirects to `/signin` if not authenticated |
+| **Admin routes**     | `AdminGuard` checks `user.role === 'admin'` or `'super_admin'`  |
+| **Forms**            | React Hook Form + Zod schema validation                         |
+| **Async mutations**  | TanStack React Query with automatic cache invalidation          |
+| **Error handling**   | Global toast notifications (Sonner) + inline field errors       |
+| **Token refresh**    | Automatic 401 retry with token refresh (single attempt)         |
+
+---
+
+## Development
+
+```bash
+cd web
+bun install
+bun dev
+```
+
+The development server runs on `http://localhost:3000` with Turbopack enabled.
+
+<Callout type="info">
+  Set `NEXT_PUBLIC_API_URL` in `web/.env.local` to point to your Go backend
+  (default: `http://localhost:8080/api/v1`).
+</Callout>

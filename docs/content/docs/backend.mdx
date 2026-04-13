@@ -1,0 +1,320 @@
+---
+title: Backend Guide
+description: Architecture, patterns, and developer guide for the GoMPP Go backend.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+The GoMPP backend is a Go HTTP API built with [Chi v5](https://github.com/go-chi/chi), [pgx/v5](https://github.com/jackc/pgx) for PostgreSQL, and a custom FFmpeg-based transcoding pipeline.
+
+---
+
+## Project Layout
+
+```
+server/
+  main.go              # Entry point — wires everything together
+internal/
+  config/config.go     # Viper-based configuration loading
+  database/
+    postgres.go        # pgxpool connection + migration runner
+    migrations/        # Goose SQL migrations (00001–00012)
+  model/               # Domain structs & request/response types
+  repository/          # Data-access layer (raw SQL via pgx)
+  service/             # Business logic layer
+  handler/             # HTTP handlers (Chi)
+  middleware/          # Auth, RBAC, rate limiting, logging, CORS, metrics
+  router/router.go     # Route definitions + middleware wiring
+  storage/             # Backend interface + local/S3 implementations
+  transcoder/          # FFmpeg wrapper, worker pool, presets
+```
+
+---
+
+## Startup Flow
+
+`server/main.go` orchestrates the entire startup sequence:
+
+1. Load configuration from env / `.env` / config file
+2. Configure zerolog (level, format)
+3. Connect to PostgreSQL with pgxpool (connection pooling)
+4. Run Goose migrations (embedded SQL files)
+5. Seed the super-admin user (first run only)
+6. Initialize all repositories
+7. Initialize storage backend (local or S3)
+8. Initialize services (Auth, Webhook, Video, Google OAuth, WebAuthn, Transcode)
+9. Seed default encoding presets (first run only)
+10. Start the transcoder worker pool
+11. Register all HTTP handlers
+12. Start HTTP server with graceful shutdown (`SIGINT`/`SIGTERM`)
+
+---
+
+## Layered Architecture
+
+```
+HTTP Request
+  │
+  ▼
+┌─────────────────────────────────┐
+│  Router  (Chi)                  │  Route matching, middleware chain
+├─────────────────────────────────┤
+│  Middleware                     │  Auth, RBAC, rate limit, logging, CORS, metrics
+├─────────────────────────────────┤
+│  Handler                       │  HTTP decode/encode, validation, status codes
+├─────────────────────────────────┤
+│  Service                       │  Business logic, cross-cutting concerns
+├─────────────────────────────────┤
+│  Repository                    │  SQL queries via pgx (parameterised)
+├─────────────────────────────────┤
+│  PostgreSQL                    │  pgxpool connection pool
+└─────────────────────────────────┘
+```
+
+Each layer depends only on the layer below it. Handlers never touch the database directly; services never write HTTP responses.
+
+---
+
+## Middleware Stack
+
+Every request passes through the global middleware chain in order:
+
+| Middleware      | Purpose                                                                      |
+| --------------- | ---------------------------------------------------------------------------- |
+| `RequestID`     | Assigns a unique ID to each request (Chi built-in)                           |
+| `RealIP`        | Extracts client IP from `X-Forwarded-For` (Chi built-in)                     |
+| `SecureHeaders` | Sets `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `HSTS` |
+| `Logger`        | Logs method, path, status, bytes, latency, IP via zerolog                    |
+| `Metrics`       | Records Prometheus counters and histograms                                   |
+| `Recoverer`     | Catches panics and returns 500 (Chi built-in)                                |
+| `CORS`          | Validates `Origin` against the configured allowlist                          |
+| `Timeout`       | 60-second global request timeout                                             |
+
+Route-specific middleware is applied per group:
+
+- **Auth routes** — `authLimiter.Handler` (rate limiting)
+- **Authenticated routes** — `Auth` middleware (JWT / API key) + `generalLimiter.Handler`
+- **Admin routes** — `RequireAdmin` middleware (role check)
+
+### Authentication Middleware
+
+The `Auth` middleware checks credentials in this order:
+
+1. **API Key** — `X-API-Key` header → SHA-256 hash → lookup in `api_keys` table → validate `is_active` and `expires_at`
+2. **JWT** — `Authorization: Bearer {token}` → HMAC-SHA256 validation → extract claims → verify `token_type == "access"`
+
+On success, the middleware sets three context values:
+
+- `UserIDKey` — `uuid.UUID` of the authenticated user
+- `RoleKey` — `string` role (`user`, `admin`, `super_admin`)
+- `AuthMethod` — `"jwt"` or `"api_key"`
+
+Extract them with `middleware.GetUserID(ctx)` and `middleware.GetRole(ctx)`.
+
+### RBAC Middleware
+
+```go
+func RequireAdmin(next http.Handler) http.Handler
+```
+
+Returns `403 Forbidden` if the authenticated user's role is not `admin` or `super_admin`.
+
+### Rate Limiting
+
+Two independent rate limiters run concurrently:
+
+| Limiter          | Applied To               | Default           |
+| ---------------- | ------------------------ | ----------------- |
+| `authLimiter`    | `/auth/*` routes         | 10 req/min per IP |
+| `generalLimiter` | All authenticated routes | 60 req/min per IP |
+
+Limits are hot-reloadable from the `system_settings` table — a background goroutine polls every 30 seconds and calls `SetLimit()` on each limiter.
+
+When exceeded, the response is:
+
+```json
+// HTTP 429 Too Many Requests
+// Retry-After: 60
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "too many requests"
+  }
+}
+```
+
+---
+
+## Handlers
+
+Handlers are thin HTTP adapters. They:
+
+1. Parse the request (path params, query params, JSON body, multipart form)
+2. Validate input
+3. Call the appropriate service method
+4. Return a JSON response with the correct status code
+
+### Error Responses
+
+All errors follow a consistent envelope:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "video not found"
+  }
+}
+```
+
+Common codes: `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `VALIDATION_ERROR`, `RATE_LIMITED`, `INTERNAL_ERROR`.
+
+### Video Handler
+
+The largest handler, managing the full video lifecycle:
+
+| Method   | Endpoint                        | Description                                  |
+| -------- | ------------------------------- | -------------------------------------------- |
+| `POST`   | `/videos/upload`                | Upload video file (multipart, 32 MB buffer)  |
+| `GET`    | `/videos`                       | List videos (paginated, filterable)          |
+| `GET`    | `/videos/{id}`                  | Get video with transcode jobs and stream URL |
+| `PUT`    | `/videos/{id}`                  | Update video metadata                        |
+| `DELETE` | `/videos/{id}`                  | Soft-delete video                            |
+| `POST`   | `/videos/{id}/retranscode`      | Re-trigger transcoding                       |
+| `GET`    | `/videos/{id}/thumbnails`       | List generated thumbnails                    |
+| `PUT`    | `/videos/{id}/thumbnail`        | Set active thumbnail                         |
+| `POST`   | `/videos/{id}/thumbnail/upload` | Upload custom thumbnail (10 MB limit)        |
+
+**Public (no auth):**
+
+| Method | Endpoint                         | Description                                   |
+| ------ | -------------------------------- | --------------------------------------------- |
+| `GET`  | `/public/videos/{slug}`          | Get public video by slug (increments views)   |
+| `GET`  | `/public/videos/{slug}/download` | Download source (if `allow_download` is true) |
+
+### Auth Handler
+
+| Method | Endpoint               | Description                                 |
+| ------ | ---------------------- | ------------------------------------------- |
+| `POST` | `/auth/register`       | Create account (email, username, password)  |
+| `POST` | `/auth/login`          | Email + password login → tokens             |
+| `POST` | `/auth/refresh`        | Exchange refresh token for new access token |
+| `POST` | `/auth/logout`         | Stateless logout (no-op)                    |
+| `GET`  | `/auth/me`             | Current authenticated user                  |
+| `POST` | `/auth/google`         | Google OAuth2 sign-in                       |
+| `POST` | `/auth/passkey/begin`  | Start WebAuthn discoverable login           |
+| `POST` | `/auth/passkey/finish` | Complete WebAuthn login                     |
+| `GET`  | `/auth/providers`      | List enabled auth providers                 |
+
+### Settings Handler
+
+| Method | Endpoint                  | Auth  | Description              |
+| ------ | ------------------------- | ----- | ------------------------ |
+| `GET`  | `/settings`               | None  | List all system settings |
+| `GET`  | `/settings/{key}`         | None  | Get single setting       |
+| `PUT`  | `/settings/{key}`         | Admin | Update single setting    |
+| `PUT`  | `/settings`               | Admin | Bulk update settings     |
+| `POST` | `/settings/verify-ffmpeg` | Admin | Verify FFmpeg binary     |
+
+### Other Handlers
+
+- **Presets** — CRUD for encoding presets (admin for writes)
+- **Webhooks** — CRUD for webhook endpoints, secret regeneration, delivery log
+- **Users** — Admin user management, self-service profile updates
+- **Analytics** — Overview stats, top videos, bandwidth, device types, traffic series
+
+---
+
+## Services
+
+### AuthService
+
+Handles registration, login, token issuance, and token validation.
+
+- **Password hashing** — bcrypt with cost 12
+- **JWT signing** — HMAC-SHA256 (HS256)
+- **Token types** — `access` (configurable expiry, default 60 min) and `refresh` (default 7 days)
+- **Google OAuth** — Validates Google ID tokens, auto-creates users on first login
+- **WebAuthn** — FIDO2 discoverable credentials for passwordless login
+
+### VideoService
+
+Orchestrates the video lifecycle:
+
+1. **Upload** — Store source file → create `Video` record → create `TranscodeJob` for each default preset → fire `video.uploaded` webhook
+2. **Stream URL** — Returns the master HLS playlist URL, optionally signed with HMAC-SHA256
+3. **Delete** — Soft-deletes (sets `deleted_at`) → fires `video.deleted` webhook
+4. **Retranscode** — Creates new jobs for specified (or default) presets
+
+### WebhookService
+
+Delivers events to user-configured HTTP endpoints:
+
+- **Delivery** — `POST` with JSON payload, `X-GoMPP-Signature` header (HMAC-SHA256), `X-GoMPP-Event` header
+- **Retry** — Exponential backoff: immediate → 1s → 4s (3 attempts max)
+- **Logging** — Each delivery attempt stored in `webhook_deliveries` table
+
+### MediaSigner
+
+Generates HMAC-SHA256 signed query strings for stream URLs:
+
+```
+/transcoded/{path}/playlist.m3u8?sig={hmac}&exp={timestamp}
+```
+
+Used when a preset has `signed_url_enabled = true`.
+
+---
+
+## Repositories
+
+All repositories use `pgxpool.Pool` for connection pooling and parameterised queries (`$1, $2, ...`). Key patterns:
+
+- **Atomic job claiming** — `SELECT ... FOR UPDATE SKIP LOCKED` ensures only one worker processes a job
+- **Soft deletes** — Videos use `deleted_at IS NULL` filtering rather than physical deletion
+- **Computed fields** — `TranscodedSize` is calculated from `SUM(output_size)` of completed jobs; `PasskeyCount` from credentials count
+- **UPSERT** — Settings use `ON CONFLICT (key) DO UPDATE`
+
+---
+
+## Storage Backends
+
+The `Backend` interface abstracts file storage:
+
+```go
+type Backend interface {
+    Put(path string, reader io.Reader) error
+    Get(path string) (io.ReadCloser, error)
+    Delete(path string) error
+    Exists(path string) (bool, error)
+    Size(path string) (int64, error)
+    DirSize(path string) (int64, error)
+    URL(path string) string
+    List(prefix string) ([]string, error)
+}
+```
+
+Two implementations:
+
+| Backend          | Description         | Notes                                                                                        |
+| ---------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| **LocalBackend** | Filesystem storage  | Implements `LocalPathResolver` for FFmpeg direct access. Path traversal protection built-in. |
+| **S3Backend**    | AWS S3 / MinIO / R2 | Uses AWS SDK v2. Supports custom endpoints and path-style URLs.                              |
+
+The backend is selected at startup via `GOMPP_STORAGE_BACKEND` (`local` or `s3`).
+
+---
+
+## Adding a New Endpoint
+
+1. **Model** — Define request/response structs in `internal/model/`
+2. **Repository** — Add data access methods in `internal/repository/`
+3. **Service** — Add business logic in `internal/service/`
+4. **Handler** — Add HTTP handler methods in `internal/handler/`
+5. **Router** — Register the route in `internal/router/router.go`
+6. **Migration** — Add a new Goose migration under `internal/database/migrations/` if schema changes are needed
+
+<Callout type="info">
+  Follow the existing naming convention: `00013_your_feature.sql` for
+  migrations, and keep handlers thin — business logic belongs in services.
+</Callout>

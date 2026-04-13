@@ -1,0 +1,186 @@
+---
+title: Configuration
+description: Complete reference for all GoMPP environment variables and system settings.
+---
+
+GoMPP uses a layered configuration system:
+
+1. **Environment variables** (prefix `GOMPP_`) — Set at startup, requires restart to change
+2. **`.env` file** — Automatically loaded from the project root
+3. **System Settings** (database) — Configurable at runtime via the admin dashboard
+
+Environment variables take precedence over `.env` file values.
+
+---
+
+## Environment Variables
+
+### JWT (Required)
+
+| Variable                      | Default | Description                                                                                 |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `GOMPP_JWT_SECRET`            | —       | **Required.** HMAC-SHA256 signing key for JWT tokens. Generate with `openssl rand -hex 32`. |
+| `GOMPP_JWT_ACCESSEXPIRY_MIN`  | `60`    | Access token lifetime in minutes                                                            |
+| `GOMPP_JWT_REFRESHEXPIRY_DAY` | `7`     | Refresh token lifetime in days                                                              |
+
+<Callout type="error">
+  The server will refuse to start if `GOMPP_JWT_SECRET` is not set.
+</Callout>
+
+### Server
+
+| Variable                    | Default   | Description                                                                           |
+| --------------------------- | --------- | ------------------------------------------------------------------------------------- |
+| `GOMPP_SERVER_HOST`         | `0.0.0.0` | Listen address                                                                        |
+| `GOMPP_SERVER_PORT`         | `8080`    | Listen port                                                                           |
+| `GOMPP_SERVER_CORS_ORIGINS` | —         | Comma-separated allowed origins (e.g., `http://localhost:3000,http://localhost:8080`) |
+
+### Database (PostgreSQL)
+
+| Variable                               | Default     | Description                                    |
+| -------------------------------------- | ----------- | ---------------------------------------------- |
+| `GOMPP_DATABASE_HOST`                  | `localhost` | PostgreSQL host                                |
+| `GOMPP_DATABASE_PORT`                  | `5432`      | PostgreSQL port                                |
+| `GOMPP_DATABASE_USER`                  | `gompp`     | Database user                                  |
+| `GOMPP_DATABASE_PASSWORD`              | `gompp`     | Database password                              |
+| `GOMPP_DATABASE_NAME`                  | `gompp`     | Database name                                  |
+| `GOMPP_DATABASE_SSLMODE`               | `disable`   | SSL mode (`disable`, `require`, `verify-full`) |
+| `GOMPP_DATABASE_MAX_CONNS`             | `25`        | Maximum pool connections                       |
+| `GOMPP_DATABASE_MIN_CONNS`             | `5`         | Minimum idle connections                       |
+| `GOMPP_DATABASE_MAX_CONN_LIFETIME_MIN` | `60`        | Max connection lifetime (minutes)              |
+| `GOMPP_DATABASE_MAX_CONN_IDLE_MIN`     | `30`        | Max connection idle time (minutes)             |
+| `GOMPP_DATABASE_HEALTH_CHECK_MIN`      | `1`         | Health check interval (minutes)                |
+
+### Storage
+
+| Variable                          | Default        | Description                              |
+| --------------------------------- | -------------- | ---------------------------------------- |
+| `GOMPP_STORAGE_BACKEND`           | `local`        | Storage backend: `local` or `s3`         |
+| `GOMPP_STORAGE_BASEPATH`          | `./data/media` | Local storage root directory             |
+| `GOMPP_STORAGE_S3_BUCKET`         | —              | S3 bucket name                           |
+| `GOMPP_STORAGE_S3_REGION`         | `us-east-1`    | S3 region                                |
+| `GOMPP_STORAGE_S3_ENDPOINT`       | —              | Custom S3 endpoint (for MinIO, R2, etc.) |
+| `GOMPP_STORAGE_S3_ACCESS_KEY`     | —              | S3 access key ID                         |
+| `GOMPP_STORAGE_S3_SECRET_KEY`     | —              | S3 secret access key                     |
+| `GOMPP_STORAGE_S3_USE_PATH_STYLE` | `false`        | Use path-style URLs (required for MinIO) |
+| `GOMPP_STORAGE_S3_PUBLIC_URL`     | —              | Public URL prefix for S3 objects         |
+| `GOMPP_STORAGE_S3_PREFIX`         | —              | Key prefix for all stored objects        |
+
+### Transcoding
+
+| Variable                      | Default       | Description                              |
+| ----------------------------- | ------------- | ---------------------------------------- |
+| `GOMPP_TRANSCODE_WORKERS`     | `2`           | Number of concurrent transcoding workers |
+| `GOMPP_TRANSCODE_FFMPEGPATH`  | `ffmpeg`      | Path to FFmpeg binary                    |
+| `GOMPP_TRANSCODE_FFPROBEPATH` | `ffprobe`     | Path to FFprobe binary                   |
+| `GOMPP_TRANSCODE_TEMPDIR`     | `./data/temp` | Temporary directory for transcoding      |
+
+### Logging
+
+| Variable           | Default   | Description                                  |
+| ------------------ | --------- | -------------------------------------------- |
+| `GOMPP_LOG_LEVEL`  | `info`    | Log level: `debug`, `info`, `warn`, `error`  |
+| `GOMPP_LOG_FORMAT` | `console` | Output format: `console` (colored) or `json` |
+
+### Google OAuth
+
+| Variable                 | Default | Description                                                    |
+| ------------------------ | ------- | -------------------------------------------------------------- |
+| `GOMPP_GOOGLE_CLIENT_ID` | —       | Google OAuth Client ID. Leave empty to disable Google sign-in. |
+
+### WebAuthn / Passkeys
+
+| Variable                         | Default                 | Description                                  |
+| -------------------------------- | ----------------------- | -------------------------------------------- |
+| `GOMPP_WEBAUTHN_RP_DISPLAY_NAME` | `GoMPP`                 | Relying Party display name shown to users    |
+| `GOMPP_WEBAUTHN_RP_ID`           | `localhost`             | Relying Party ID (must match the domain)     |
+| `GOMPP_WEBAUTHN_RP_ORIGINS`      | `http://localhost:3000` | Comma-separated allowed origins for WebAuthn |
+
+### Rate Limiting
+
+| Variable                      | Default | Description                                           |
+| ----------------------------- | ------- | ----------------------------------------------------- |
+| `GOMPP_RATELIMIT_AUTH_RPM`    | `10`    | Auth endpoint rate limit (requests per minute per IP) |
+| `GOMPP_RATELIMIT_GENERAL_RPM` | `60`    | General API rate limit (requests per minute per IP)   |
+
+<Callout type="info">
+  Rate limits can also be changed at runtime via **Settings → Security** in the
+  admin dashboard. Database values override environment defaults within 30
+  seconds.
+</Callout>
+
+### Frontend
+
+| Variable                | Default                        | Description                                            |
+| ----------------------- | ------------------------------ | ------------------------------------------------------ |
+| `NEXT_PUBLIC_API_URL`   | `http://localhost:8080/api/v1` | Backend API base URL                                   |
+| `NEXT_PUBLIC_BASE_PATH` | —                              | URL base path (for reverse proxy sub-path deployments) |
+| `RECAPTCHA_SECRET_KEY`  | —                              | Google reCAPTCHA v2 server-side secret                 |
+
+---
+
+## System Settings (Database)
+
+These settings are stored in the `system_settings` table and configurable via the admin dashboard under **Settings**. They take effect immediately without restarting the server.
+
+### System Tab
+
+| Key            | Type   | Default         | Description                                     |
+| -------------- | ------ | --------------- | ----------------------------------------------- |
+| `site_name`    | string | `"GoMPP"`       | Application display name                        |
+| `site_logo`    | string | `"/gompp.webp"` | Logo URL (used in sidebar, auth pages, landing) |
+| `site_favicon` | string | `"/gompp.webp"` | Favicon URL                                     |
+| `theme_color`  | string | —               | Primary theme color as hex (e.g., `#6366f1`)    |
+| `base_url`     | string | —               | Public-facing base URL                          |
+
+### Player Tab
+
+| Key                        | Type    | Default       | Description                          |
+| -------------------------- | ------- | ------------- | ------------------------------------ |
+| `default_video_player`     | string  | `"shaka"`     | Player engine: `shaka` or `vidstack` |
+| `player_autoplay`          | boolean | `false`       | Auto-play videos                     |
+| `player_muted`             | boolean | `false`       | Start muted                          |
+| `player_loop`              | boolean | `false`       | Loop playback                        |
+| `player_controls`          | boolean | `true`        | Show player controls                 |
+| `player_volume`            | number  | `1.0`         | Default volume (0.0 – 1.0)           |
+| `player_color`             | string  | —             | Player accent color                  |
+| `player_logo`              | boolean | `false`       | Show logo overlay                    |
+| `player_logo_url`          | string  | —             | Logo image URL                       |
+| `player_logo_position`     | string  | `"top-right"` | Logo position                        |
+| `player_watermark`         | boolean | `false`       | Show watermark                       |
+| `player_poster_url`        | string  | —             | Default poster image                 |
+| `player_subtitles_enabled` | boolean | `true`        | Enable subtitle support              |
+
+### Security Tab
+
+| Key                      | Type   | Default | Description                        |
+| ------------------------ | ------ | ------- | ---------------------------------- |
+| `jwt_access_expiry_min`  | number | `60`    | JWT access token expiry (minutes)  |
+| `jwt_refresh_expiry_day` | number | `7`     | JWT refresh token expiry (days)    |
+| `rate_limit_rpm`         | number | `60`    | General API rate limit (req/min)   |
+| `auth_rate_limit_rpm`    | number | `10`    | Auth endpoint rate limit (req/min) |
+
+### Encoding Tab
+
+| Key                     | Type    | Default | Description                               |
+| ----------------------- | ------- | ------- | ----------------------------------------- |
+| `max_concurrent_jobs`   | number  | —       | Override worker count from env            |
+| `opensubtitles_api_key` | string  | —       | OpenSubtitles API key for subtitle search |
+| `ctrl_opensubtitle`     | boolean | —       | Enable/disable OpenSubtitles integration  |
+
+---
+
+## Configuration Loading Order
+
+GoMPP uses [Viper](https://github.com/spf13/viper) with this resolution order (highest priority first):
+
+1. **Environment variables** — Prefixed with `GOMPP_`, underscores replace dots (e.g., `GOMPP_DATABASE_HOST`)
+2. **`.env` file** — Loaded via `gotenv.OverLoad()` before Viper initializes
+3. **Config file** — Optional `config.yaml` in the working directory or `./config/`
+4. **Defaults** — Hardcoded fallbacks in the config package
+
+For system settings (database-backed), changes take effect:
+
+- **Immediately** for settings read on each request (branding, player config)
+- **Within 30 seconds** for rate limits (polled by background goroutine)
+- **On restart** for worker count (read once at startup, unless overridden by `max_concurrent_jobs`)

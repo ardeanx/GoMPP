@@ -1,0 +1,384 @@
+{
+    "annotations": { "list": [] },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+            "id": 100,
+            "title": "HTTP Overview",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": {
+                "defaults": { "unit": "reqps" },
+                "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+            "id": 1,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Request Rate",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "sum(rate(gompp_http_requests_total[5m]))",
+                    "legendFormat": "req/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps",
+                    "color": { "mode": "fixed", "fixedColor": "red" }
+                },
+                "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+            "id": 2,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Error Rate (5xx)",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "sum(rate(gompp_http_requests_total{status=~\"5..\"}[5m]))",
+                    "legendFormat": "err/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": {
+                "defaults": { "unit": "s" },
+                "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+            "id": 3,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "P95 Latency",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(gompp_http_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "p95"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": {
+                "defaults": { "unit": "short" },
+                "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+            "id": 4,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Requests In Flight",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "gompp_http_requests_in_flight",
+                    "legendFormat": "in-flight"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+            "id": 5,
+            "title": "Request Rate by Status",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "sum by (status) (rate(gompp_http_requests_total[5m]))",
+                    "legendFormat": "{{status}}"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+            "id": 6,
+            "title": "Request Latency by Endpoint",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum by (le, path) (rate(gompp_http_request_duration_seconds_bucket[5m])))",
+                    "legendFormat": "{{path}}"
+                }
+            ]
+        },
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+            "id": 101,
+            "title": "Transcoding",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+            "id": 10,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Queue Depth",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "gompp_transcode_queue_depth",
+                    "legendFormat": "pending"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 6, "w": 6, "x": 6, "y": 16 },
+            "id": 11,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Active Workers",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "gompp_transcode_workers_active",
+                    "legendFormat": "active"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 6, "w": 6, "x": 12, "y": 16 },
+            "id": 12,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Jobs Completed (rate)",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "sum(rate(gompp_transcode_jobs_total{status=\"completed\"}[5m]))",
+                    "legendFormat": "completed/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "color": { "mode": "fixed", "fixedColor": "red" }
+                },
+                "overrides": []
+            },
+            "gridPos": { "h": 6, "w": 6, "x": 18, "y": 16 },
+            "id": 13,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Jobs Failed (rate)",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "sum(rate(gompp_transcode_jobs_total{status=\"failed\"}[5m]))",
+                    "legendFormat": "failed/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+            "id": 14,
+            "title": "Transcode Duration by Codec",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum by (le, codec) (rate(gompp_transcode_job_duration_seconds_bucket[15m])))",
+                    "legendFormat": "{{codec}} p95"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+            "id": 15,
+            "title": "Transcode Jobs by Status",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "sum by (status) (rate(gompp_transcode_jobs_total[5m]))",
+                    "legendFormat": "{{status}}"
+                }
+            ]
+        },
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 },
+            "id": 102,
+            "title": "Storage & Videos",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 6, "w": 8, "x": 0, "y": 31 },
+            "id": 20,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Video Uploads (rate)",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "rate(gompp_video_uploads_total[5m])",
+                    "legendFormat": "uploads/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+            "gridPos": { "h": 6, "w": 8, "x": 8, "y": 31 },
+            "id": 21,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Upload Throughput",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "rate(gompp_video_upload_bytes_total[5m])",
+                    "legendFormat": "bytes/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 6, "w": 8, "x": 16, "y": 31 },
+            "id": 22,
+            "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+            "title": "Storage Errors (rate)",
+            "type": "stat",
+            "targets": [
+                {
+                    "expr": "sum(rate(gompp_storage_operation_errors_total[5m]))",
+                    "legendFormat": "errors/s"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+            "id": 23,
+            "title": "Storage Operation Latency",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(gompp_storage_operation_duration_seconds_bucket[5m])))",
+                    "legendFormat": "{{operation}} p95"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+            "id": 24,
+            "title": "Storage Operations by Type",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "sum by (operation) (rate(gompp_storage_operations_total[5m]))",
+                    "legendFormat": "{{operation}}"
+                }
+            ]
+        },
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 },
+            "id": 103,
+            "title": "Webhooks & Auth",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
+            "id": 30,
+            "title": "Webhook Deliveries",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "sum by (event, success) (rate(gompp_webhook_deliveries_total[5m]))",
+                    "legendFormat": "{{event}} (success={{success}})"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+            "id": 31,
+            "title": "Auth Attempts",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "sum by (method, result) (rate(gompp_auth_attempts_total[5m]))",
+                    "legendFormat": "{{method}} / {{result}}"
+                }
+            ]
+        },
+        {
+            "collapsed": false,
+            "gridPos": { "h": 1, "w": 24, "x": 0, "y": 54 },
+            "id": 104,
+            "title": "Database",
+            "type": "row"
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 55 },
+            "id": 40,
+            "title": "DB Query Latency (p95)",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum by (le, query) (rate(gompp_db_query_duration_seconds_bucket[5m])))",
+                    "legendFormat": "{{query}}"
+                }
+            ]
+        },
+        {
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 55 },
+            "id": 41,
+            "title": "DB Connections",
+            "type": "timeseries",
+            "targets": [
+                {
+                    "expr": "gompp_db_connections_active",
+                    "legendFormat": "active"
+                },
+                {
+                    "expr": "gompp_db_connections_idle",
+                    "legendFormat": "idle"
+                }
+            ]
+        }
+    ],
+    "schemaVersion": 39,
+    "tags": ["gompp"],
+    "templating": { "list": [] },
+    "time": { "from": "now-1h", "to": "now" },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "GoMPP Overview",
+    "uid": "gompp-overview",
+    "version": 1
+}

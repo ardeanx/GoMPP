@@ -1,0 +1,11 @@
+declare module 'vidstack/define/media-player.js';
+declare module 'vidstack/define/media-outlet.js';
+declare module 'vidstack/define/media-community-skin.js';
+declare module 'vidstack/styles/base.css';
+declare module 'vidstack/styles/community-skin/video.css';
+declare module 'vidstack/styles/ui/buttons.css';
+declare module 'vidstack/styles/ui/buffering.css';
+declare module 'vidstack/styles/ui/captions.css';
+declare module 'vidstack/styles/ui/menus.css';
+declare module 'vidstack/styles/ui/sliders.css';
+declare module 'vidstack/styles/ui/tooltips.css';

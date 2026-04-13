@@ -1,0 +1,277 @@
+---
+title: Architecture
+description: How GoMPP is designed — system components, data flow, and technical decisions.
+---
+
+## System Overview
+
+GoMPP follows a clean separation between the API backend (Go), the web frontend (Next.js), and the transcoding engine (FFmpeg). All components communicate through well-defined interfaces.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Client                              │
+│                  (Browser / API Consumer)                    │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+              ┌────────────────┐
+              │     Nginx      │  ← Reverse proxy, static media
+              └────┬───────┬───┘
+                   │       │
+          ┌────────▼──┐ ┌──▼────────┐
+          │  Next.js  │ │   Go API  │
+          │  Frontend │ │  Backend  │
+          │  :3000    │ │  :8080    │
+          └───────────┘ └──┬────┬───┘
+                           │    │
+                    ┌──────▼┐ ┌─▼──────────┐
+                    │  PgSQL│ │  FFmpeg     │
+                    │  :5432│ │  Workers    │
+                    └───────┘ └──┬──────────┘
+                                 │
+                          ┌──────▼──────┐
+                          │   Storage   │
+                          │ Local / S3  │
+                          └─────────────┘
+```
+
+## Backend Architecture
+
+The Go backend follows a **layered architecture** with strict dependency direction:
+
+```
+Handler (HTTP) → Service (Business Logic) → Repository (Data Access) → Database
+                                           → Storage (File I/O)
+```
+
+### Layer Responsibilities
+
+| Layer          | Package               | Role                                                          |
+| -------------- | --------------------- | ------------------------------------------------------------- |
+| **Router**     | `internal/router`     | Route definitions, middleware composition, CORS               |
+| **Middleware** | `internal/middleware` | Auth, rate limiting, logging, RBAC, security headers, metrics |
+| **Handler**    | `internal/handler`    | HTTP request/response handling, input validation              |
+| **Service**    | `internal/service`    | Business logic, orchestration, external integrations          |
+| **Repository** | `internal/repository` | SQL queries, data mapping, pagination                         |
+| **Model**      | `internal/model`      | Structs, constants, request/response types                    |
+| **Storage**    | `internal/storage`    | File operations abstracted behind `Backend` interface         |
+| **Transcoder** | `internal/transcoder` | FFmpeg execution, worker pool, progress tracking              |
+| **Config**     | `internal/config`     | Viper-based configuration from env vars                       |
+
+### Key Design Decisions
+
+**No ORM.** GoMPP uses raw SQL with `pgx/v5` for maximum control over queries, transactions, and connection pooling. The repository layer handles all SQL and data mapping.
+
+**Interface-based storage.** The `storage.Backend` interface abstracts file operations, allowing seamless switching between local filesystem and S3-compatible storage without changing business logic.
+
+**Stateless authentication.** JWT tokens with no server-side session storage. WebAuthn session state is signed with HMAC and embedded in the response rather than stored server-side.
+
+**Atomic job claiming.** Transcoding jobs use PostgreSQL's `SELECT ... FOR UPDATE SKIP LOCKED` to enable safe concurrent processing by multiple workers without double-processing.
+
+---
+
+## Authentication Flow
+
+GoMPP supports three authentication methods:
+
+### JWT (Email/Password)
+
+```
+Client                    API                      Database
+  │                        │                          │
+  │─── POST /auth/login ──▶│                          │
+  │    {email, password}   │── bcrypt.Compare ────────▶│
+  │                        │◀─ user record ───────────│
+  │◀── {access, refresh} ──│                          │
+  │                        │                          │
+  │─── GET /videos ───────▶│                          │
+  │    Authorization:      │── ValidateToken ─────────│
+  │    Bearer <access>     │                          │
+  │◀── video list ─────────│                          │
+  │                        │                          │
+  │─── POST /auth/refresh ▶│                          │
+  │    {refresh_token}     │── ValidateToken(refresh) │
+  │◀── {new_access} ──────│                          │
+```
+
+- **Access token**: Short-lived (default 60 minutes), type `"access"`
+- **Refresh token**: Long-lived (default 7 days), type `"refresh"`
+- Both use **HS256** (HMAC-SHA256) signing
+
+### API Keys
+
+API keys provide machine-to-machine authentication:
+
+```
+Client                    API                         Database
+  │                        │                            │
+  │─── GET /videos ───────▶│                            │
+  │    X-API-Key: gmpp_... │── SHA-256(key) ───────────▶│
+  │                        │◀─ api_key record ──────────│
+  │                        │── verify is_active,         │
+  │                        │   expires_at                │
+  │◀── video list ─────────│                            │
+```
+
+- **Format**: `gmpp_` prefix + 32 hex characters (69 chars total)
+- Only the SHA-256 hash is stored in the database
+- Supports scoped permissions and expiration dates
+
+### Google OAuth / WebAuthn
+
+Both methods exchange a third-party credential for GoMPP JWT tokens. See the [Security](/docs/security) page for details.
+
+---
+
+## Transcoding Pipeline
+
+The transcoding system uses a producer-consumer pattern with a configurable worker pool:
+
+```
+Upload ──▶ Create Jobs ──▶ Worker Pool ──▶ FFmpeg ──▶ Storage
+                               │
+                          ┌────┴────┐
+                          │ Worker 1│──▶ Probe → Transcode → Upload
+                          │ Worker 2│──▶ Probe → Transcode → Upload
+                          │ Worker N│──▶ Probe → Transcode → Upload
+                          └─────────┘
+```
+
+### Job Lifecycle
+
+```
+pending → processing → completed
+                    ↘ failed (auto-retry if attempts < max_attempts)
+                         ↘ pending (retry)
+```
+
+1. **Upload** — Video file stored to `source/{videoID}/{filename}`
+2. **Job Creation** — One `transcode_job` per default encoding preset
+3. **Claiming** — Workers atomically claim pending jobs via `SELECT ... FOR UPDATE SKIP LOCKED`
+4. **Probing** — FFprobe extracts duration, resolution, codec info
+5. **Transcoding** — FFmpeg processes each resolution defined in the preset
+6. **Progress** — Real-time progress parsing from FFmpeg's stderr (`time=HH:MM:SS.ms`)
+7. **Completion** — Output files stored, master playlist generated
+8. **Post-processing** — Thumbnail candidates, preview GIF, and banner image generated
+9. **Webhooks** — `video.ready` event fired to all subscribed endpoints
+
+### Output Structure
+
+```
+transcoded/
+  {hash}_{videoID}/
+    720p/
+      playlist.m3u8
+      segment000.ts
+      segment001.ts
+      ...
+    1080p/
+      playlist.m3u8
+      segment000.ts
+      ...
+    master.m3u8          ← Adaptive bitrate manifest
+    meta.json            ← Generation metadata
+thumbnails/
+  {videoID}/
+    thumb_001.jpg
+    thumb_002.jpg
+    ...
+```
+
+---
+
+## Frontend Architecture
+
+The Next.js frontend uses the **App Router** with a provider-heavy architecture:
+
+```
+QueryProvider
+  └── AuthProvider
+       └── ThemeProvider (next-themes)
+            └── SettingsProvider (localStorage)
+                 └── ThemeColorApplier (DB settings → CSS vars)
+                      └── TooltipProvider
+                           └── Page Content
+```
+
+### State Management
+
+| Type                | Technology                   | Use Case                             |
+| ------------------- | ---------------------------- | ------------------------------------ |
+| **Server state**    | TanStack React Query         | API data, caching, polling           |
+| **Auth state**      | React Context                | User, tokens, login/logout           |
+| **UI settings**     | React Context + localStorage | Sidebar, theme, locale               |
+| **System settings** | TanStack Query + DB          | Branding, rate limits, player config |
+| **Form state**      | React Hook Form + Zod        | Validation, submission               |
+
+### Route Groups
+
+| Group     | Path Pattern                   | Access        |
+| --------- | ------------------------------ | ------------- |
+| Landing   | `/`                            | Public        |
+| Auth      | `/signin`, `/signup`, etc.     | Public        |
+| Protected | `/analytics`, `/library`, etc. | Authenticated |
+| Admin     | `/settings`, `/users`          | Admin role    |
+| Watch     | `/watch/[slug]`                | Public        |
+
+---
+
+## Storage Architecture
+
+GoMPP abstracts file storage behind the `Backend` interface:
+
+```go
+type Backend interface {
+    Put(path string, reader io.Reader) error
+    Get(path string) (io.ReadCloser, error)
+    Delete(path string) error
+    Exists(path string) (bool, error)
+    Size(path string) (int64, error)
+    DirSize(path string) (int64, error)
+    URL(path string) string
+    List(prefix string) ([]string, error)
+}
+```
+
+| Backend   | Config Value                  | Use Case                                  |
+| --------- | ----------------------------- | ----------------------------------------- |
+| **Local** | `GOMPP_STORAGE_BACKEND=local` | Development, single-server deployments    |
+| **S3**    | `GOMPP_STORAGE_BACKEND=s3`    | Production, multi-server, CDN integration |
+
+The `LocalPathResolver` interface allows FFmpeg to access files directly on disk without downloading, while S3 backends transparently download source files to a temp directory for processing.
+
+---
+
+## Webhook System
+
+Webhooks use HMAC-SHA256 signed HTTP callbacks:
+
+```
+Event Fired
+  │
+  ├── Query active webhooks subscribed to event
+  │
+  ├── For each webhook (async goroutine):
+  │     │
+  │     ├── Marshal payload as JSON
+  │     ├── Sign: HMAC-SHA256(webhook.secret, body)
+  │     ├── POST to webhook.url with headers:
+  │     │     Content-Type: application/json
+  │     │     X-GoMPP-Signature: hex(signature)
+  │     │     X-GoMPP-Event: event_type
+  │     │
+  │     ├── On failure: retry 3x with exponential backoff
+  │     │     (1s, 2s, 4s)
+  │     │
+  │     └── Record delivery in webhook_deliveries table
+```
+
+### Event Types
+
+| Event               | Trigger                        |
+| ------------------- | ------------------------------ |
+| `video.uploaded`    | Video file successfully stored |
+| `video.ready`       | All transcoding jobs completed |
+| `video.deleted`     | Video soft-deleted             |
+| `transcode.started` | Worker begins processing a job |
+| `transcode.failed`  | Transcoding job failed         |

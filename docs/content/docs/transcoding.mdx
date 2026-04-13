@@ -1,0 +1,302 @@
+---
+title: Transcoding
+description: FFmpeg integration, worker pool, presets, HLS streaming, and encryption in GoMPP.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+GoMPP includes a production-grade video transcoding pipeline built on FFmpeg with a concurrent worker pool, multi-resolution HLS output, optional encryption, and real-time progress tracking.
+
+---
+
+## Pipeline Overview
+
+```
+ Upload                  Workers                        Storage
+┌──────────┐       ┌──────────────────┐          ┌─────────────────┐
+│ Video     │       │  WorkerPool      │          │  Local / S3     │
+│ Upload    │──────▶│  (N goroutines)  │─────────▶│                 │
+│ Handler   │       │                  │          │  HLS segments   │
+└──────────┘       │  1. Claim job     │          │  Playlists      │
+     │              │  2. Probe video   │          │  Thumbnails     │
+     │              │  3. Transcode     │          │  Previews       │
+     ▼              │  4. Generate HLS  │          └─────────────────┘
+┌──────────┐       │  5. Thumbnails    │
+│ Job Queue │       │  6. Master m3u8  │
+│ (Postgres)│──────▶│  7. Fire webhooks│
+└──────────┘       └──────────────────┘
+```
+
+1. When a video is uploaded, the handler creates a `TranscodeJob` row for each **default preset**
+2. Workers poll the `transcode_jobs` table using `SELECT ... FOR UPDATE SKIP LOCKED` (atomic claiming)
+3. Each worker runs FFmpeg to produce HLS segments per resolution
+4. On completion, a master playlist is generated and thumbnails/previews are created
+5. Webhooks fire at each stage: `transcode.started`, `transcode.completed` / `transcode.failed`, `video.ready`
+
+---
+
+## Worker Pool
+
+The worker pool starts `N` goroutines (configurable via `GOMPP_TRANSCODE_WORKERS`, default 2):
+
+```
+Worker-1: claim → process → claim → process → ...
+Worker-2: claim → process → claim → process → ...
+  ...
+Worker-N: claim → process → claim → process → ...
+```
+
+**Job claiming** uses PostgreSQL's `SELECT FOR UPDATE SKIP LOCKED`:
+
+```sql
+SELECT id, video_id, preset_id, ...
+FROM transcode_jobs
+WHERE status = 'pending'
+ORDER BY created_at ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+```
+
+This ensures exactly one worker picks up each job, even under high concurrency. If no jobs are available, the worker sleeps for 3 seconds before retrying.
+
+**Graceful shutdown** — On `SIGINT`/`SIGTERM`, the pool cancels its context and waits for all active workers to finish their current jobs before exiting.
+
+---
+
+## Job Lifecycle
+
+```
+pending ──▶ processing ──▶ completed
+              │                 │
+              │ (error)         ▼
+              ▼           video.ready
+           attempts       (if all jobs done)
+           < max?
+              │
+         yes: ──▶ pending (retry)
+          no: ──▶ failed
+```
+
+| Status       | Description                                 |
+| ------------ | ------------------------------------------- |
+| `pending`    | Waiting for a worker to claim               |
+| `processing` | Worker is running FFmpeg                    |
+| `completed`  | Transcoding finished successfully           |
+| `failed`     | All retries exhausted (default: 3 attempts) |
+| `cancelled`  | Manually cancelled                          |
+
+When a job fails:
+
+- If `attempts < max_attempts` (default 3), the status reverts to `pending` for retry
+- If `attempts >= max_attempts`, the status is set to `failed` and the last 30 lines of FFmpeg stderr are stored in `ffmpeg_log`
+
+---
+
+## Job Processing Steps
+
+For each claimed job, the worker executes:
+
+1. **Probe** — Run `ffprobe` to extract duration, width, height (if not already known)
+2. **Fire webhook** — `transcode.started`
+3. **Transcode** — For each resolution in the preset:
+   - Build FFmpeg command from preset parameters
+   - Start FFmpeg process and parse stderr for progress
+   - Report progress (0–100%) to the database in real-time
+4. **Mark complete** — Set `status = completed`, record `output_path`, `output_size`, `duration`
+5. **Check completion** — If all jobs for the video are done:
+   - Generate master HLS playlist (`playlist.m3u8`)
+   - Generate thumbnail candidates (6 frames spread across the video)
+   - Generate animated GIF preview
+   - Generate banner frame
+   - Update video status to `ready`
+   - Fire webhook: `video.ready`
+
+---
+
+## Encoding Presets
+
+Presets define the full set of FFmpeg parameters for a transcode job.
+
+### Key Fields
+
+| Field            | Type   | Description                                                       |
+| ---------------- | ------ | ----------------------------------------------------------------- |
+| `codec`          | string | Video codec: `h264`, `h265`, `vp9`, `av1`                         |
+| `container`      | string | Container: `mp4`, `webm`, `mkv`                                   |
+| `resolutions`    | array  | Multi-resolution targets `[{label, width, height}]`               |
+| `video_bitrate`  | string | Target bitrate (e.g., `5000k`)                                    |
+| `audio_codec`    | string | Audio codec: `aac`, `libopus`                                     |
+| `audio_bitrate`  | string | Audio bitrate (e.g., `128k`)                                      |
+| `audio_channels` | int    | Channel count (1, 2, 6)                                           |
+| `framerate`      | int    | Target FPS (optional)                                             |
+| `pixel_format`   | string | Pixel format (e.g., `yuv420p`)                                    |
+| `preset_speed`   | string | Encoder speed: `ultrafast`–`veryslow` (x264) or `p1`–`p7` (NVENC) |
+| `crf`            | int    | Constant Rate Factor (0–51, lower = better quality)               |
+| `hw_accel`       | string | Hardware acceleration: `none`, `nvenc`, `qsv`, `vaapi`            |
+| `extra_flags`    | string | Additional FFmpeg flags                                           |
+
+### Extended Fields
+
+| Field                   | Type   | Default | Description                                 |
+| ----------------------- | ------ | ------- | ------------------------------------------- |
+| `output_format`         | string | `hls`   | Output: `hls`, `dash`, `progressive`        |
+| `hls_segment_duration`  | int    | `6`     | Segment length in seconds                   |
+| `encryption`            | string | `none`  | Encryption: `none`, `aes-128`, `sample-aes` |
+| `key_rotation_interval` | int    | `0`     | Key rotation interval (0 = disable)         |
+| `signed_url_enabled`    | bool   | `false` | Require HMAC signature for stream URLs      |
+| `signed_url_expiry`     | int    | `3600`  | Signed URL expiry in seconds                |
+| `thumbnail_enabled`     | bool   | `false` | Auto-generate thumbnails                    |
+| `thumbnail_interval`    | int    | `10`    | Seconds between thumbnail frames            |
+| `banner_enabled`        | bool   | `false` | Generate banner frame                       |
+| `banner_timestamp`      | int    | `5`     | Timestamp for banner extraction             |
+| `faststart`             | bool   | `true`  | MP4 streaming optimisation (`moov` atom)    |
+| `two_pass`              | bool   | `false` | Two-pass encoding for better quality        |
+
+### Default Presets
+
+GoMPP seeds three H.264 presets on first startup:
+
+| Preset         | Resolution | Bitrate | CRF |
+| -------------- | ---------- | ------- | --- |
+| 360p Standard  | 640×360    | 1000k   | 23  |
+| 720p Standard  | 1280×720   | 2500k   | 23  |
+| 1080p Standard | 1920×1080  | 5000k   | 23  |
+
+All default presets use `aac` audio at 128 kbps, `yuv420p` pixel format, and `medium` encoder speed.
+
+---
+
+## Hardware Acceleration
+
+GoMPP supports GPU-accelerated encoding via FFmpeg's hardware acceleration APIs:
+
+| Value   | Technology                               | GPU Required             |
+| ------- | ---------------------------------------- | ------------------------ |
+| `none`  | Software (libx264/libx265/libvpx/libaom) | None                     |
+| `nvenc` | NVIDIA NVENC                             | NVIDIA GPU + CUDA        |
+| `qsv`   | Intel Quick Sync Video                   | Intel CPU with iGPU      |
+| `vaapi` | Video Acceleration API (Linux)           | Compatible GPU + drivers |
+
+When `hw_accel` is set, GoMPP maps the codec to the appropriate encoder:
+
+| Codec  | Software     | NVENC        | QSV        |
+| ------ | ------------ | ------------ | ---------- |
+| `h264` | `libx264`    | `h264_nvenc` | `h264_qsv` |
+| `h265` | `libx265`    | `hevc_nvenc` | `hevc_qsv` |
+| `vp9`  | `libvpx-vp9` | —            | —          |
+| `av1`  | `libaom-av1` | `av1_nvenc`  | —          |
+
+<Callout type="warn">
+  GPU acceleration requires the appropriate drivers and FFmpeg compiled with
+  hardware support. Use **Settings → Encoding → Verify FFmpeg** to check
+  capabilities.
+</Callout>
+
+---
+
+## HLS Output Structure
+
+Each transcode job produces an HLS directory under:
+
+```
+transcoded/{hash8}_{videoID}/
+  ├── playlist.m3u8              # Master playlist (all resolutions)
+  ├── 360/
+  │   ├── playlist.m3u8          # Variant playlist
+  │   ├── segment_001.ts
+  │   ├── segment_002.ts
+  │   └── ...
+  ├── 720/
+  │   ├── playlist.m3u8
+  │   ├── segment_001.ts
+  │   └── ...
+  ├── 1080/
+  │   ├── playlist.m3u8
+  │   ├── segment_001.ts
+  │   └── ...
+  ├── thumbnail/
+  │   ├── thumb.jpg              # Primary thumbnail
+  │   ├── thumb_0.jpg            # Candidate 0
+  │   ├── thumb_1.jpg            # Candidate 1
+  │   └── ...
+  ├── preview.gif                # Animated preview
+  ├── banner.jpg                 # Banner frame
+  └── meta.json                  # Video metadata
+```
+
+Where `hash8` is the first 4 bytes of `SHA-256(videoID)` encoded as hex — used to distribute files across storage.
+
+The **master playlist** references all variant streams with bandwidth and resolution metadata, enabling adaptive bitrate streaming in any HLS-compatible player.
+
+---
+
+## Content Encryption
+
+GoMPP supports AES-128 and SAMPLE-AES encryption for HLS streams:
+
+| Mode         | Description                              |
+| ------------ | ---------------------------------------- |
+| `none`       | No encryption (default)                  |
+| `aes-128`    | Full segment encryption with AES-128-CBC |
+| `sample-aes` | Sample-level encryption (MPEG-2 TS)      |
+
+When encryption is enabled:
+
+1. A random 16-byte key is generated per job
+2. An `enc.key` file is created in the output directory
+3. The HLS playlist includes `EXT-X-KEY` tags pointing to the key URI
+4. If `key_rotation_interval` > 0, keys are rotated at the specified interval
+
+---
+
+## Signed URLs
+
+When `signed_url_enabled` is true on a preset, stream URLs include an HMAC-SHA256 signature:
+
+```
+/transcoded/.../playlist.m3u8?sig={hmac_hex}&exp={unix_timestamp}
+```
+
+- `sig` — HMAC-SHA256 of `path + exp` using `GOMPP_JWT_SECRET`
+- `exp` — Unix timestamp when the URL expires (default: 3600 seconds from generation)
+
+The backend validates the signature on every playlist and segment request.
+
+---
+
+## Progress Tracking
+
+FFmpeg writes progress to stderr in this format:
+
+```
+frame=1234 q=-1.0 Lsize=N/A time=00:01:23.45 bitrate=N/A speed=2.5x
+```
+
+GoMPP extracts the `time=HH:MM:SS.FF` value using a regex, converts it to seconds, and computes:
+
+```
+progress = (current_time / total_duration) × 100
+```
+
+Progress is written to the `transcode_jobs` table and available via the API for real-time UI updates. The frontend auto-polls active jobs to display progress bars.
+
+---
+
+## FFmpeg Verification
+
+Admins can verify the FFmpeg installation from the dashboard:
+
+```
+POST /api/v1/settings/verify-ffmpeg
+```
+
+This runs `ffmpeg -version` and returns:
+
+```json
+{
+  "valid": true,
+  "version": "ffmpeg version 7.0.2 Copyright (c) 2000-2024..."
+}
+```
+
+Use this to confirm FFmpeg is available and check for hardware acceleration support.

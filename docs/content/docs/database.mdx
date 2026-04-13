@@ -1,0 +1,407 @@
+---
+title: Database
+description: PostgreSQL schema reference, migrations, and data-access patterns.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+GoMPP uses **PostgreSQL 16** with the **pgx/v5** native driver and connection pooling via `pgxpool`. Migrations are managed by [Goose](https://github.com/pressly/goose) and embedded in the binary.
+
+---
+
+## Connection Pool
+
+The pool is configured via environment variables:
+
+| Parameter           | Default | Description                      |
+| ------------------- | ------- | -------------------------------- |
+| `MaxConns`          | 25      | Maximum total connections        |
+| `MinConns`          | 5       | Minimum idle connections         |
+| `MaxConnLifetime`   | 60 min  | Maximum connection lifetime      |
+| `MaxConnIdleTime`   | 30 min  | Maximum idle connection time     |
+| `HealthCheckPeriod` | 1 min   | Background health check interval |
+
+All queries use parameterised placeholders (`$1`, `$2`, ...) to prevent SQL injection.
+
+---
+
+## Schema Overview
+
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│     users        │     │     videos       │     │ encoding_presets │
+│─────────────────│     │─────────────────│     │─────────────────│
+│ id (PK)         │◁────│ user_id (FK)    │     │ id (PK)         │
+│ email (UNIQUE)  │     │ id (PK)         │     │ name            │
+│ username (UNIQUE)│     │ slug (UNIQUE)   │     │ codec           │
+│ password_hash   │     │ status          │     │ resolutions     │
+│ role            │     │ source_path     │     │ is_default      │
+│ google_id       │     │ master_playlist │     └────────┬─────────┘
+│ avatar_url      │     │ view_count      │              │
+└──────┬───────────┘     └──────┬───────────┘              │
+       │                        │                          │
+       │  ┌─────────────────┐   │  ┌──────────────────┐    │
+       │  │   api_keys      │   │  │ transcode_jobs   │    │
+       │  │────────────────│   │  │─────────────────│    │
+       └──│ user_id (FK)   │   └──│ video_id (FK)   │────┘
+          │ key_hash       │      │ preset_id (FK)  │
+          │ scopes         │      │ status          │
+          └────────────────┘      │ progress        │
+                                  │ output_path     │
+       ┌─────────────────┐       └──────────────────┘
+       │   webhooks       │
+       │────────────────│       ┌──────────────────┐
+       │ user_id (FK)   │       │ video_analytics  │
+       │ url            │       │─────────────────│
+       │ secret         │       │ video_id (FK)   │
+       │ events         │       │ event_type      │
+       └──────┬─────────┘       │ ip_address      │
+              │                 │ device_type     │
+       ┌──────┴─────────┐      └──────────────────┘
+       │webhook_deliveries│
+       │────────────────│      ┌──────────────────┐
+       │ webhook_id (FK)│      │ video_subtitles  │
+       │ event_type     │      │─────────────────│
+       │ success        │      │ video_id (FK)   │
+       └────────────────┘      │ language        │
+                               │ file_path       │
+       ┌─────────────────┐     └──────────────────┘
+       │user_credentials  │
+       │────────────────│      ┌──────────────────┐
+       │ user_id (FK)   │      │ account_sessions │
+       │ credential_id  │      │─────────────────│
+       │ public_key     │      │ user_id (FK)    │
+       └────────────────┘      │ device_name     │
+                               │ ip_address      │
+                               └──────────────────┘
+
+       Settings Tables (5):
+       ┌──────────────────┐
+       │ system_settings   │  site_name, site_logo, theme_color, rate limits...
+       │ player_settings   │  default_player, autoplay, volume...
+       │ storage_settings  │  storage config overrides
+       │ transcode_encoding│  encoding defaults
+       │ security_settings │  JWT expiry, rate limits
+       └──────────────────┘
+```
+
+---
+
+## Table Reference
+
+### users
+
+| Column                | Type         | Constraints                                     | Description             |
+| --------------------- | ------------ | ----------------------------------------------- | ----------------------- |
+| `id`                  | UUID         | PK, default `gen_random_uuid()`                 | User ID                 |
+| `email`               | VARCHAR(255) | NOT NULL, UNIQUE                                | Email address           |
+| `username`            | VARCHAR(100) | NOT NULL, UNIQUE                                | Display name            |
+| `password_hash`       | TEXT         | NOT NULL                                        | bcrypt hash             |
+| `role`                | VARCHAR(20)  | NOT NULL, CHECK `(admin, user)`, default `user` | User role               |
+| `is_active`           | BOOLEAN      | NOT NULL, default `true`                        | Account active status   |
+| `avatar_url`          | TEXT         | —                                               | Avatar image path       |
+| `google_id`           | TEXT         | UNIQUE                                          | Google OAuth subject ID |
+| `last_login_at`       | TIMESTAMPTZ  | —                                               | Last login timestamp    |
+| `password_changed_at` | TIMESTAMPTZ  | —                                               | Last password change    |
+| `created_at`          | TIMESTAMPTZ  | NOT NULL, default `NOW()`                       | —                       |
+| `updated_at`          | TIMESTAMPTZ  | NOT NULL, auto-updated                          | —                       |
+
+**Indexes:** `email`, `username`, `role`
+
+<Callout type="info">
+  The `role` check constraint allows `admin` and `user`. The `super_admin` and
+  `staff` roles are handled at the application layer.
+</Callout>
+
+### videos
+
+| Column              | Type         | Constraints               | Description                    |
+| ------------------- | ------------ | ------------------------- | ------------------------------ |
+| `id`                | UUID         | PK                        | Video ID                       |
+| `user_id`           | UUID         | FK → `users(id)`          | Owner                          |
+| `title`             | VARCHAR(255) | NOT NULL                  | Title                          |
+| `description`       | TEXT         | —                         | Description                    |
+| `slug`              | VARCHAR(255) | NOT NULL, UNIQUE          | URL-safe slug (`{name}-{id8}`) |
+| `original_filename` | VARCHAR(255) | NOT NULL                  | Uploaded filename              |
+| `mime_type`         | VARCHAR(50)  | NOT NULL                  | MIME type                      |
+| `file_size`         | BIGINT       | NOT NULL                  | Source file size (bytes)       |
+| `duration`          | FLOAT        | —                         | Duration (seconds)             |
+| `width`             | INTEGER      | —                         | Source width                   |
+| `height`            | INTEGER      | —                         | Source height                  |
+| `status`            | VARCHAR(20)  | NOT NULL, CHECK           | Video status                   |
+| `source_path`       | TEXT         | NOT NULL                  | Storage path to source         |
+| `thumbnail_path`    | TEXT         | —                         | Active thumbnail               |
+| `preview_path`      | TEXT         | —                         | Animated GIF preview           |
+| `master_playlist`   | TEXT         | —                         | Master HLS playlist            |
+| `error_message`     | TEXT         | —                         | Error if failed                |
+| `view_count`        | BIGINT       | NOT NULL, default `0`     | View counter                   |
+| `is_public`         | BOOLEAN      | NOT NULL, default `false` | Public access                  |
+| `allow_download`    | BOOLEAN      | NOT NULL, default `false` | Allow source download          |
+| `metadata`          | JSONB        | default `{}`              | Custom metadata                |
+| `created_at`        | TIMESTAMPTZ  | NOT NULL                  | —                              |
+| `updated_at`        | TIMESTAMPTZ  | auto-updated              | —                              |
+| `deleted_at`        | TIMESTAMPTZ  | —                         | Soft delete marker             |
+
+**Status values:** `uploading`, `uploaded`, `processing`, `ready`, `failed`, `deleted`
+
+**Indexes:** `user_id`, `status`, `slug`, `created_at DESC`, `deleted_at WHERE NULL`
+
+### encoding_presets
+
+| Column                  | Type         | Default      | Description                  |
+| ----------------------- | ------------ | ------------ | ---------------------------- |
+| `id`                    | UUID         | PK           | Preset ID                    |
+| `name`                  | VARCHAR(100) | —            | Display name                 |
+| `codec`                 | VARCHAR(20)  | —            | Video codec                  |
+| `container`             | VARCHAR(20)  | `mp4`        | Container format             |
+| `resolution`            | VARCHAR(20)  | —            | Legacy resolution label      |
+| `width`                 | INTEGER      | —            | Legacy width                 |
+| `height`                | INTEGER      | —            | Legacy height                |
+| `resolutions`           | JSONB        | `[]`         | Multi-resolution array       |
+| `video_bitrate`         | VARCHAR(20)  | —            | Target bitrate               |
+| `audio_codec`           | VARCHAR(20)  | `aac`        | Audio codec                  |
+| `audio_bitrate`         | VARCHAR(20)  | `128k`       | Audio bitrate                |
+| `audio_channels`        | INTEGER      | `2`          | Audio channels               |
+| `framerate`             | INTEGER      | —            | Target FPS                   |
+| `pixel_format`          | VARCHAR(20)  | `yuv420p`    | Pixel format                 |
+| `preset_speed`          | VARCHAR(20)  | `medium`     | Encoder speed preset         |
+| `crf`                   | INTEGER      | `23`         | Quality (0–51)               |
+| `hw_accel`              | VARCHAR(20)  | `none`       | Hardware acceleration        |
+| `extra_flags`           | TEXT         | —            | Additional FFmpeg flags      |
+| `output_format`         | VARCHAR(20)  | `hls`        | Output: hls/dash/progressive |
+| `hls_segment_duration`  | INTEGER      | `6`          | HLS segment length (s)       |
+| `encryption`            | VARCHAR(20)  | `none`       | Encryption mode              |
+| `key_rotation_interval` | INTEGER      | `0`          | Key rotation (s)             |
+| `signed_url_enabled`    | BOOLEAN      | `false`      | Signed URL requirement       |
+| `signed_url_expiry`     | INTEGER      | `3600`       | Signed URL TTL (s)           |
+| `thumbnail_enabled`     | BOOLEAN      | `false`      | Auto thumbnails              |
+| `thumbnail_interval`    | INTEGER      | `10`         | Thumbnail interval (s)       |
+| `banner_enabled`        | BOOLEAN      | `false`      | Banner generation            |
+| `banner_timestamp`      | INTEGER      | `5`          | Banner timestamp (s)         |
+| `faststart`             | BOOLEAN      | `true`       | MP4 faststart                |
+| `movflags`              | VARCHAR(100) | `+faststart` | FFmpeg movflags              |
+| `two_pass`              | BOOLEAN      | `false`      | Two-pass encoding            |
+| `is_default`            | BOOLEAN      | `false`      | Auto-encode on upload        |
+| `is_active`             | BOOLEAN      | `true`       | Available for selection      |
+| `sort_order`            | INTEGER      | `0`          | UI display order             |
+
+### transcode_jobs
+
+| Column          | Type         | Default                     | Description                    |
+| --------------- | ------------ | --------------------------- | ------------------------------ |
+| `id`            | UUID         | PK                          | Job ID                         |
+| `video_id`      | UUID         | FK → `videos(id)` CASCADE   | Parent video                   |
+| `preset_id`     | UUID         | FK → `encoding_presets(id)` | Encoding preset                |
+| `status`        | VARCHAR(20)  | `pending`                   | Job status                     |
+| `progress`      | FLOAT        | `0`, CHECK 0–100            | Transcode progress (%)         |
+| `output_path`   | TEXT         | —                           | Output directory path          |
+| `output_size`   | BIGINT       | —                           | Transcoded output size (bytes) |
+| `duration`      | FLOAT        | —                           | Video duration (seconds)       |
+| `started_at`    | TIMESTAMPTZ  | —                           | Processing started             |
+| `completed_at`  | TIMESTAMPTZ  | —                           | Processing finished            |
+| `error_message` | TEXT         | —                           | Error details                  |
+| `attempts`      | INTEGER      | `0`                         | Current attempt count          |
+| `max_attempts`  | INTEGER      | `3`                         | Maximum retry attempts         |
+| `worker_id`     | VARCHAR(100) | —                           | Assigned worker                |
+| `ffmpeg_log`    | TEXT         | —                           | Last 30 lines of FFmpeg stderr |
+
+**Status values:** `pending`, `processing`, `completed`, `failed`, `cancelled`
+
+**Indexes:** `video_id`, `status`, `created_at WHERE status = 'pending'`
+
+### api_keys
+
+| Column         | Type         | Description               |
+| -------------- | ------------ | ------------------------- |
+| `id`           | UUID         | PK                        |
+| `user_id`      | UUID         | FK → `users(id)` CASCADE  |
+| `name`         | VARCHAR(100) | User-given name           |
+| `key_hash`     | TEXT         | UNIQUE, SHA-256 hash      |
+| `key_prefix`   | VARCHAR(8)   | First 8 chars for display |
+| `scopes`       | TEXT[]       | Permission scopes         |
+| `expires_at`   | TIMESTAMPTZ  | Optional expiry           |
+| `last_used_at` | TIMESTAMPTZ  | Last API call             |
+| `is_active`    | BOOLEAN      | Active status             |
+
+### webhooks
+
+| Column      | Type         | Description                     |
+| ----------- | ------------ | ------------------------------- |
+| `id`        | UUID         | PK                              |
+| `user_id`   | UUID         | FK → `users(id)` CASCADE        |
+| `name`      | VARCHAR(100) | Name                            |
+| `url`       | TEXT         | HTTPS endpoint                  |
+| `secret`    | TEXT         | HMAC secret                     |
+| `events`    | TEXT[]       | Subscribed events (GIN indexed) |
+| `is_active` | BOOLEAN      | Active status                   |
+
+### webhook_deliveries
+
+| Column            | Type        | Description                 |
+| ----------------- | ----------- | --------------------------- |
+| `id`              | UUID        | PK                          |
+| `webhook_id`      | UUID        | FK → `webhooks(id)` CASCADE |
+| `event_type`      | VARCHAR(50) | Event name                  |
+| `payload`         | JSONB       | Event payload               |
+| `response_status` | INTEGER     | HTTP response code          |
+| `response_body`   | TEXT        | Response body (truncated)   |
+| `duration_ms`     | INTEGER     | Delivery duration           |
+| `attempt`         | INTEGER     | Attempt number              |
+| `delivered_at`    | TIMESTAMPTZ | Delivery timestamp          |
+| `success`         | BOOLEAN     | Delivery success            |
+
+### video_analytics
+
+| Column              | Type        | Description                              |
+| ------------------- | ----------- | ---------------------------------------- |
+| `id`                | UUID        | PK                                       |
+| `video_id`          | UUID        | FK → `videos(id)` CASCADE                |
+| `event_type`        | VARCHAR(20) | `view`, `play`, `complete`, `embed_view` |
+| `ip_address`        | INET        | Client IP                                |
+| `user_agent`        | TEXT        | Browser user agent                       |
+| `referer`           | TEXT        | HTTP Referer                             |
+| `country`           | VARCHAR(2)  | Country code                             |
+| `duration_watched`  | FLOAT       | Seconds watched                          |
+| `bytes_transferred` | BIGINT      | Bandwidth used                           |
+| `device_type`       | VARCHAR(30) | Desktop/mobile/tablet                    |
+| `os_name`           | VARCHAR(50) | Operating system                         |
+| `browser_name`      | VARCHAR(50) | Browser name                             |
+
+### video_subtitles
+
+| Column      | Type          | Description                         |
+| ----------- | ------------- | ----------------------------------- |
+| `id`        | UUID          | PK                                  |
+| `video_id`  | UUID          | FK → `videos(id)` CASCADE           |
+| `language`  | VARCHAR(10)   | Language code (e.g., `en`)          |
+| `label`     | VARCHAR(255)  | Display label                       |
+| `file_path` | VARCHAR(1024) | Storage path                        |
+| `format`    | VARCHAR(10)   | `srt`, `vtt`, `ass`, `sub`          |
+| `source`    | VARCHAR(50)   | `opensubtitles`, `upload`, `manual` |
+
+### user_credentials (WebAuthn)
+
+| Column             | Type         | Description                    |
+| ------------------ | ------------ | ------------------------------ |
+| `id`               | UUID         | PK                             |
+| `user_id`          | UUID         | FK → `users(id)` CASCADE       |
+| `credential_id`    | BYTEA        | UNIQUE, WebAuthn credential ID |
+| `public_key`       | BYTEA        | WebAuthn public key            |
+| `attestation_type` | TEXT         | Attestation type               |
+| `aaguid`           | BYTEA        | Authenticator AAGUID           |
+| `sign_count`       | BIGINT       | Replay attack counter          |
+| `backup_eligible`  | BOOLEAN      | Passkey backup eligible        |
+| `backup_state`     | BOOLEAN      | Passkey backed up              |
+| `name`             | VARCHAR(100) | User-given name                |
+
+### account_sessions
+
+| Column            | Type         | Description              |
+| ----------------- | ------------ | ------------------------ |
+| `id`              | UUID         | PK                       |
+| `user_id`         | UUID         | FK → `users(id)` CASCADE |
+| `device_name`     | VARCHAR(150) | Device name              |
+| `device_os`       | VARCHAR(100) | Operating system         |
+| `browser`         | VARCHAR(200) | Browser name             |
+| `ip_address`      | INET         | Client IP                |
+| `location`        | VARCHAR(150) | Location string          |
+| `last_session_at` | TIMESTAMPTZ  | Last activity            |
+
+### Settings Tables
+
+Five key-value tables with identical schema:
+
+- `system_settings` — Site name, logo, favicon, theme, base URL, rate limits
+- `player_settings` — Default player, autoplay, volume, subtitles
+- `storage_settings` — Storage backend overrides
+- `transcode_encoding_settings` — Encoding defaults
+- `security_settings` — JWT expiry, rate limits
+
+| Column        | Type         | Description                   |
+| ------------- | ------------ | ----------------------------- |
+| `key`         | VARCHAR(100) | PK                            |
+| `value`       | JSONB        | Setting value                 |
+| `description` | TEXT         | Human-readable description    |
+| `updated_by`  | UUID         | FK → `users(id)`, last editor |
+
+---
+
+## Migrations
+
+GoMPP uses Goose for forward-only SQL migrations. Migrations run automatically on startup.
+
+| Migration                         | Description                                                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `00001_init_schema`               | Core schema: users, api_keys, videos, transcode_jobs, encoding_presets, webhooks, webhook_deliveries, video_analytics, 5 settings tables |
+| `00003_preset_multi_resolution`   | Add `resolutions` JSONB column, migrate scalar resolution                                                                                |
+| `00004_preset_hw_accel`           | Add `hw_accel` column                                                                                                                    |
+| `00005_video_allow_download`      | Add `allow_download` to videos                                                                                                           |
+| `00006_account_sessions`          | Add `account_sessions` table, `password_changed_at`                                                                                      |
+| `00007_preset_extended_fields`    | Add output format, HLS, encryption, thumbnails, banner, two-pass fields; add device analytics columns                                    |
+| `00008_video_subtitles`           | Add `video_subtitles` table, `ctrl_opensubtitle` setting                                                                                 |
+| `00009_user_avatar_oauth_passkey` | Add `avatar_url`, `google_id` to users; create `user_credentials` table                                                                  |
+| `00010_credential_flags`          | Add `backup_eligible`, `backup_state` to credentials                                                                                     |
+| `00011_default_branding`          | Seed default `site_logo`, `site_favicon`, `site_name` settings                                                                           |
+| `00012_rate_limit_settings`       | Seed `rate_limit_rpm` and `auth_rate_limit_rpm` settings                                                                                 |
+
+<Callout type="info">
+  Migration `00002` was skipped during development. This is harmless — Goose
+  tracks applied migrations by name.
+</Callout>
+
+---
+
+## Automatic Triggers
+
+All tables with `updated_at` columns use a shared trigger function:
+
+```sql
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+This ensures `updated_at` is always current without application-level handling.
+
+---
+
+## Query Patterns
+
+### Atomic Job Claiming
+
+Workers use `SELECT FOR UPDATE SKIP LOCKED` to atomically claim the next pending job:
+
+```sql
+SELECT * FROM transcode_jobs
+WHERE status = 'pending'
+ORDER BY created_at ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED;
+```
+
+This prevents race conditions between concurrent workers.
+
+### Soft Deletes
+
+Videos use a `deleted_at` column instead of physical deletion:
+
+```sql
+-- All video queries include:
+WHERE deleted_at IS NULL
+```
+
+A partial index on `deleted_at WHERE deleted_at IS NULL` optimises these queries.
+
+### UPSERT for Settings
+
+Settings use PostgreSQL's `ON CONFLICT` for upsert operations:
+
+```sql
+INSERT INTO system_settings (key, value)
+VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE SET value = $2;
+```

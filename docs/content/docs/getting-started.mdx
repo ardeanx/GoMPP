@@ -1,0 +1,186 @@
+---
+title: Getting Started
+description: Install and run GoMPP locally or with Docker in just a few minutes.
+---
+
+## Prerequisites
+
+Before installing GoMPP, ensure you have the following:
+
+| Requirement    | Version | Purpose                            |
+| -------------- | ------- | ---------------------------------- |
+| **Go**         | 1.25+   | Backend API server                 |
+| **Node.js**    | 22+     | Frontend build (runtime)           |
+| **Bun**        | 1.x     | Frontend package manager & bundler |
+| **PostgreSQL** | 16+     | Primary database                   |
+| **FFmpeg**     | 6+      | Video transcoding engine           |
+
+<Callout type="info">
+  For Docker deployments, only **Docker** and **Docker Compose** are required.
+  All dependencies are bundled in the container images.
+</Callout>
+
+## Quick Start (Local Development)
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/gompp/gompp.git
+cd gompp
+```
+
+### 2. Configure Environment
+
+Copy the example environment file and fill in the required values:
+
+```bash
+cp .env.example .env
+```
+
+The only **required** variable is `GOMPP_JWT_SECRET`:
+
+```bash
+# Generate a secure secret
+openssl rand -hex 32
+```
+
+Then set it in `.env`:
+
+```bash
+GOMPP_JWT_SECRET=your-generated-secret-here
+```
+
+See the [Configuration](/docs/configuration) page for all available options.
+
+### 3. Start PostgreSQL
+
+If you don't already have PostgreSQL running:
+
+```bash
+# Using Docker
+docker run -d --name gompp-db \
+  -e POSTGRES_USER=gompp \
+  -e POSTGRES_PASSWORD=gompp \
+  -e POSTGRES_DB=gompp \
+  -p 5432:5432 \
+  postgres:16-alpine
+```
+
+### 4. Start the Backend
+
+```bash
+go run ./server
+```
+
+The API server starts on `http://localhost:8080`. On first launch, it will:
+
+1. Run all database migrations automatically
+2. Seed a super admin account: `admin@gompp.dev` / `admin123`
+3. Seed default encoding presets (H.264 360p, 720p, 1080p)
+4. Start the transcoding worker pool
+
+### 5. Start the Frontend
+
+```bash
+cd web
+bun install
+bun dev
+```
+
+The dashboard opens at `http://localhost:3000`.
+
+### 6. Sign In
+
+Open `http://localhost:3000/signin` and sign in with:
+
+- **Email:** `admin@gompp.dev`
+- **Password:** `admin123`
+
+<Callout type="warn">
+  Change the default admin password immediately after first login via the
+  Account page.
+</Callout>
+
+---
+
+## Quick Start (Docker)
+
+### 1. Clone and Configure
+
+```bash
+git clone https://github.com/gompp/gompp.git
+cd gompp
+cp .env.example .env
+```
+
+Edit `.env` with at minimum:
+
+```bash
+GOMPP_JWT_SECRET=your-generated-secret-here
+```
+
+### 2. Start All Services
+
+```bash
+cd deployments
+docker compose up -d
+```
+
+This starts 6 services:
+
+| Service       | Port | Description          |
+| ------------- | ---- | -------------------- |
+| `gompp-api`   | 8080 | Go API server        |
+| `gompp-web`   | 3000 | Next.js frontend     |
+| `gompp-nginx` | 80   | Reverse proxy        |
+| `gompp-db`    | 5432 | PostgreSQL database  |
+| `prometheus`  | 9090 | Metrics collection   |
+| `grafana`     | 3001 | Monitoring dashboard |
+
+### 3. Access the Application
+
+| URL                            | Service                 |
+| ------------------------------ | ----------------------- |
+| `http://localhost`             | Application (via Nginx) |
+| `http://localhost:3000`        | Frontend (direct)       |
+| `http://localhost:8080/health` | API health check        |
+| `http://localhost:3001`        | Grafana (admin / gompp) |
+| `http://localhost:9090`        | Prometheus              |
+
+---
+
+## Project Structure
+
+```
+gompp/
+├── server/              # Go entry point (main.go)
+├── internal/            # Go backend packages
+│   ├── config/          # Configuration loading (Viper)
+│   ├── database/        # PostgreSQL connection & migrations
+│   ├── handler/         # HTTP request handlers
+│   ├── middleware/       # Auth, rate limiting, logging, RBAC
+│   ├── model/           # Data models & request types
+│   ├── repository/      # Database access layer
+│   ├── router/          # Chi router & route definitions
+│   ├── service/         # Business logic layer
+│   ├── storage/         # Local & S3 storage backends
+│   └── transcoder/      # FFmpeg wrapper & worker pool
+├── web/                 # Next.js frontend
+│   ├── app/             # App Router pages & layouts
+│   ├── components/      # UI components (80+)
+│   ├── providers/       # React context providers
+│   ├── services/        # TanStack Query API hooks
+│   ├── hooks/           # Custom React hooks
+│   ├── i18n/            # Internationalization
+│   └── lib/             # Utilities & API client
+├── deployments/         # Docker & Nginx configs
+├── Docs/                # This documentation (Fumadocs)
+└── scripts/             # Backup & restore scripts
+```
+
+## What's Next?
+
+- [Architecture](/docs/architecture) — Understand how the system is designed
+- [Configuration](/docs/configuration) — Explore all environment variables
+- [API Reference](/docs/api-reference) — Integrate with the REST API
+- [Deployment](/docs/deployment) — Production deployment guide
